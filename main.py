@@ -9,9 +9,10 @@ from dotenv import load_dotenv
 from pathlib import Path
 load_dotenv(Path(__file__).parent / ".env")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, field_validator
 
 import database as db
@@ -39,27 +40,32 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="KFC Backend", lifespan=lifespan)
 
-# CORS — barcha originlarga ruxsat
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
+# ── CORS: har qanday javobga (500 ham) header qo'shadi ──────
+class CORSEverywhere(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method == "OPTIONS":
+            return JSONResponse(
+                content={"ok": True},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "*",
+                    "Access-Control-Allow-Headers": "*",
+                    "Access-Control-Max-Age": "86400",
+                },
+            )
+        try:
+            response = await call_next(request)
+        except Exception as e:
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": str(e)},
+            )
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
 
-# OPTIONS preflight uchun qo'shimcha handler
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(rest_of_path: str):
-    return JSONResponse(
-        content={"ok": True},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-        }
-    )
+app.add_middleware(CORSEverywhere)
 
 # ── Pydantic modellari ───────────────────────────────────────
 
@@ -150,7 +156,13 @@ async def otp_send(body: OtpSendRequest):
     try:
         await send_otp(chat_id=int(tg_user["chat_id"]), code=code)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Telegram ga yuborishda xato: {str(e)}")
+        # OTP saqlangan, lekin Telegram yuborishda xato
+        # CORS header bilan qaytarish uchun JSONResponse ishlatamiz
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Telegram ga yuborishda xato: {str(e)}. BOT_TOKEN Railway Variables da to'g'ri kiritilganmi?"},
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
 
     return {"success": True, "message": "Telegram ga kod yuborildi"}
 
