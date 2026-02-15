@@ -10,6 +10,7 @@ from pathlib import Path
 load_dotenv(Path(__file__).parent / ".env")
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 
@@ -38,12 +39,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="KFC Backend", lifespan=lifespan)
 
+# CORS — barcha originlarga ruxsat
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+# OPTIONS preflight uchun qo'shimcha handler
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str):
+    return JSONResponse(
+        content={"ok": True},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 # ── Pydantic modellari ───────────────────────────────────────
 
