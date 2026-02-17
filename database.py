@@ -200,3 +200,41 @@ def increment_otp_attempts(phone: str) -> int:
                 _otp_save(codes)
                 return c["attempts"]
     return 0
+
+
+# ═══════════════════════════════════════════════════════════════
+#  REGISTERED USERS — signup da kiritilgan ism/familya
+# ═══════════════════════════════════════════════════════════════
+
+_USERS_FILE = Path(__file__).parent / "registered_users.json"
+_users_lock = threading.Lock()
+
+def _users_load() -> list[dict]:
+    if _USERS_FILE.exists():
+        try:
+            return json.loads(_USERS_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+def _users_save(users: list[dict]) -> None:
+    _USERS_FILE.write_text(json.dumps(users, ensure_ascii=False, indent=2))
+
+def get_registered_user(phone: str) -> dict | None:
+    with _users_lock:
+        users = _users_load()
+    return next((u for u in users if u.get("phone") == phone), None)
+
+def save_registered_user(phone: str, first_name: str, last_name: str) -> dict:
+    with _users_lock:
+        users = _users_load()
+        for u in users:
+            if u.get("phone") == phone:
+                u["firstName"] = first_name
+                u["lastName"] = last_name
+                _users_save(users)
+                return u
+        user = {"phone": phone, "firstName": first_name, "lastName": last_name}
+        users.append(user)
+        _users_save(users)
+    return user
