@@ -238,3 +238,55 @@ def save_registered_user(phone: str, first_name: str, last_name: str) -> dict:
         users.append(user)
         _users_save(users)
     return user
+
+
+# ═══════════════════════════════════════════════════════════════
+#  COINS — foydalanuvchi coinlari
+# ═══════════════════════════════════════════════════════════════
+
+_COINS_FILE = Path(__file__).parent / "coins.json"
+_coins_lock = threading.Lock()
+
+def _coins_load() -> list[dict]:
+    if _COINS_FILE.exists():
+        try:
+            return json.loads(_COINS_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+def _coins_save(data: list[dict]) -> None:
+    _COINS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+def get_coins(phone: str) -> int:
+    """Foydalanuvchining joriy coin balansini qaytaradi."""
+    with _coins_lock:
+        data = _coins_load()
+    rec = next((r for r in data if r.get("phone") == phone), None)
+    return rec.get("balance", 0) if rec else 0
+
+def add_coins(phone: str, amount: int, order_id: str) -> int:
+    """Coin qo'shadi va yangi balansni qaytaradi. 5% = har 1000 sum uchun 0.05 coin (yaxlit)."""
+    with _coins_lock:
+        data = _coins_load()
+        rec = next((r for r in data if r.get("phone") == phone), None)
+        if rec:
+            rec["balance"] = rec.get("balance", 0) + amount
+            rec.setdefault("history", []).append({"type": "earn", "amount": amount, "order_id": order_id, "at": __import__("datetime").datetime.utcnow().isoformat()})
+        else:
+            rec = {"phone": phone, "balance": amount, "history": [{"type": "earn", "amount": amount, "order_id": order_id, "at": __import__("datetime").datetime.utcnow().isoformat()}]}
+            data.append(rec)
+        _coins_save(data)
+    return rec["balance"]
+
+def spend_coins(phone: str, amount: int, order_id: str) -> int:
+    """Coin sarflaydi va yangi balansni qaytaradi."""
+    with _coins_lock:
+        data = _coins_load()
+        rec = next((r for r in data if r.get("phone") == phone), None)
+        if not rec or rec.get("balance", 0) < amount:
+            raise ValueError("Yetarli coin yo'q")
+        rec["balance"] -= amount
+        rec.setdefault("history", []).append({"type": "spend", "amount": amount, "order_id": order_id, "at": __import__("datetime").datetime.utcnow().isoformat()})
+        _coins_save(data)
+    return rec["balance"]
