@@ -138,8 +138,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(
         "👋 <b>KFC Riston</b> ga xush kelibsiz! 🍗\n\n"
-        "Ro'yxatdan o'tish uchun telefon raqamingizni yuboring.\n"
-        "Pastdagi tugmani bosing 👇",
+        "Ro'yxatdan o'tish uchun telefon raqamingizni saqlang.\n\n"
+        "⬇️ Pastdagi tugmani bosing:",
         parse_mode="HTML",
         reply_markup=keyboard,
     )
