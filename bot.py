@@ -30,12 +30,31 @@ def build_order_message(order: dict) -> str:
         for i in items
     )
     emoji, label = STATUS.get(order["status"], ("🕐", "Kutilmoqda"))
+
+    payment_map = {"naqt": "💵 Naqt", "card": "💳 Karta"}
+    payment = payment_map.get(order.get("payment", "naqt"), "💵 Naqt")
+
+    extra_phone = order.get("extra_phone")
+    comment = order.get("comment")
+    customer = order.get("customer_name", "")
+    phone = order.get("phone", "")
+
+    extra_lines = ""
+    if customer or phone:
+        extra_lines += f"👤 <b>Mijoz:</b> {customer} {phone}\n"
+    if extra_phone:
+        extra_lines += f"📞 <b>Qo'shimcha tel:</b> {extra_phone}\n"
+    if comment:
+        extra_lines += f"💬 <b>Izoh:</b> {comment}\n"
+
     return (
         f"🛒 <b>Yangi zakaz #{order['id'][-6:].upper()}</b>\n"
         f"_______________\n"
         f"📍 <b>Manzil:</b> {order['address']}\n\n"
         f"🍽 <b>Tarkib:</b>\n{lines}\n\n"
         f"💳 <b>Jami:</b> {order['total']:,} UZS\n"
+        f"💰 <b>To'lov:</b> {payment}\n"
+        f"{extra_lines}"
         f"⏰ <b>Vaqt:</b> {order['created_at'][:16].replace('T', ' ')}\n\n"
         f"{emoji} <b>Status:</b> {label}"
     )
