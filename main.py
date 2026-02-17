@@ -165,7 +165,10 @@ async def otp_send(body: OtpSendRequest):
             headers={"Access-Control-Allow-Origin": "*"}
         )
 
-    return {"success": True, "message": "Telegram ga kod yuborildi"}
+    # Foydalanuvchi allaqachon ro'yxatdan o'tganmi tekshirish
+    is_registered = get_registered_user(phone) is not None
+
+    return {"success": True, "message": "Telegram ga kod yuborildi", "user_exists": is_registered}
 
 # ────────────────────────────────────────────────────────────
 #  POST /api/otp/verify — OTP tekshirish
