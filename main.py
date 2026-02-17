@@ -205,7 +205,20 @@ def otp_verify(body: OtpVerifyRequest):
         )
 
     db.delete_otp(phone)
-    return {"success": True, "phone": phone}
+    
+    # Telegram userdan full_name olish (agar bor bo'lsa)
+    tg_user = db.get_telegram_user(phone)
+    user_data = None
+    if tg_user and tg_user.get("full_name"):
+        # full_name ni ism/familyaga ajratish
+        parts = tg_user["full_name"].split(" ", 1)
+        user_data = {
+            "firstName": parts[0] if len(parts) > 0 else "",
+            "lastName": parts[1] if len(parts) > 1 else "",
+            "phone": phone
+        }
+    
+    return {"success": True, "phone": phone, "user": user_data}
 
 # ────────────────────────────────────────────────────────────
 #  POST /api/orders — Yangi zakaz
