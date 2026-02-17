@@ -16,7 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, field_validator
 
 import database as db
-from database import save_registered_user, get_registered_user
+from database import save_registered_user, get_registered_user, get_coins, add_coins, spend_coins
 from bot import create_app, notify_new_order, notify_cancelled, send_otp
 
 _bot_app = None
@@ -85,6 +85,7 @@ class OrderCreate(BaseModel):
     tg_user_id: int | None = None
     phone: str | None = None
     customer_name: str | None = None
+    coins_used: int | None = None
 
     @field_validator("items")
     @classmethod
@@ -248,6 +249,7 @@ async def place_order(body: OrderCreate):
         "tg_user_id": body.tg_user_id,
         "phone": body.phone,
         "customer_name": body.customer_name,
+        "coins_used": body.coins_used or 0,
     }
     try:
         order = db.create(order_dict)
@@ -255,6 +257,13 @@ async def place_order(body: OrderCreate):
         if "DUPLICATE_ID" in str(e):
             raise HTTPException(409, "Bu ID bilan zakaz allaqachon bor")
         raise HTTPException(400, str(e))
+
+    # Coin sarflash (agar ishlatilgan bo'lsa)
+    if body.coins_used and body.coins_used > 0 and body.phone:
+        try:
+            spend_coins(phone=body.phone, amount=body.coins_used, order_id=order_id)
+        except ValueError:
+            pass  # Yetarli coin bo'lmasa o'tkazib yuboramiz
 
     asyncio.create_task(notify_after_delay(order_id))
     return {"success": True, "orderId": order["id"], "status": "pending"}
@@ -330,6 +339,17 @@ def get_profile(phone: str):
     if not user:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
     return user
+
+
+# ────────────────────────────────────────────────────────────
+#  GET /api/coins — Foydalanuvchi coin balansini olish
+# ────────────────────────────────────────────────────────────
+@app.get("/api/coins")
+def get_user_coins(phone: str):
+    if not phone.startswith("+"):
+        phone = "+" + phone
+    balance = get_coins(phone)
+    return {"phone": phone, "balance": balance, "sum_value": balance * 1000}
 
 # ── Ishga tushirish ──────────────────────────────────────────
 if __name__ == "__main__":
