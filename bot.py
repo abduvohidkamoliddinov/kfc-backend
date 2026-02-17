@@ -10,6 +10,7 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, filters
 )
 import database as db
+from database import add_coins, get_coins
 
 # ── Status ──────────────────────────────────────────────────
 STATUS = {
@@ -207,9 +208,47 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     updated = db.update_status(order_id, new_status)
     keyboard = build_keyboard(order_id, new_status)
 
+    # ─── "done" bo'lsa coin qo'shish (5% = har 1000 sum = 1 coin) ───
+    if new_status == "done":
+        phone = updated.get("phone")
+        total = updated.get("total", 0)
+        coins_used = updated.get("coins_used", 0)
+        actual_total = total + (coins_used * 1000)
+        earned = max(1, round(actual_total * 0.05 / 1000))
+        if phone:
+            new_balance = add_coins(phone=phone, amount=earned, order_id=order_id)
+            # Adminga coin haqida xabar
+            coin_msg = (
+                f"\n\n🪙 <b>Coin berildi:</b> +{earned} coin"
+                f"\n💰 Chegirma qiymati: {earned * 1000:,} UZS"
+                f"\n📊 Yangi balans: {new_balance} coin ({new_balance * 1000:,} UZS)"
+            )
+            # Userga Telegram orqali xabar yuborish
+            try:
+                tg_user = db.get_telegram_user(phone)
+                if tg_user and tg_user.get("chat_id"):
+                    await context.bot.send_message(
+                        chat_id=int(tg_user["chat_id"]),
+                        text=(
+                            f"🎉 Buyurtmangiz yetkazildi!\n\n"
+                            f"🪙 Sizga <b>+{earned} coin</b> qo'shildi!\n"
+                            f"💰 Bu <b>{earned * 1000:,} UZS</b> ga teng\n"
+                            f"📊 Balans: <b>{new_balance} coin</b> ({new_balance * 1000:,} UZS)\n\n"
+                            f"Keyingi zakazda chegirma sifatida ishlatishingiz mumkin! 🛍"
+                        ),
+                        parse_mode="HTML"
+                    )
+            except Exception as e:
+                print(f"Userga coin xabari yuborishda xato: {e}")
+        else:
+            coin_msg = ""
+    else:
+        coin_msg = ""
+
     try:
+        extra = coin_msg if new_status == "done" else ""
         await query.edit_message_text(
-            text=build_order_message(updated),
+            text=build_order_message(updated) + extra,
             parse_mode="HTML",
             reply_markup=keyboard or InlineKeyboardMarkup([]),
         )
