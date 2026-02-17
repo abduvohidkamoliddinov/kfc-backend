@@ -16,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, field_validator
 
 import database as db
+from database import save_registered_user, get_registered_user
 from bot import create_app, notify_new_order, notify_cancelled, send_otp
 
 _bot_app = None
@@ -206,17 +207,25 @@ def otp_verify(body: OtpVerifyRequest):
 
     db.delete_otp(phone)
     
-    # Telegram userdan full_name olish (agar bor bo'lsa)
-    tg_user = db.get_telegram_user(phone)
+    # 1. Avval signup da saqlangan profil tekshiriladi
+    reg_user = get_registered_user(phone)
     user_data = None
-    if tg_user and tg_user.get("full_name"):
-        # full_name ni ism/familyaga ajratish
-        parts = tg_user["full_name"].split(" ", 1)
+    if reg_user:
         user_data = {
-            "firstName": parts[0] if len(parts) > 0 else "",
-            "lastName": parts[1] if len(parts) > 1 else "",
+            "firstName": reg_user.get("firstName", ""),
+            "lastName": reg_user.get("lastName", ""),
             "phone": phone
         }
+    else:
+        # 2. Agar yo'q bo'lsa, Telegram full_name ishlatiladi
+        tg_user = db.get_telegram_user(phone)
+        if tg_user and tg_user.get("full_name"):
+            parts = tg_user["full_name"].split(" ", 1)
+            user_data = {
+                "firstName": parts[0] if len(parts) > 0 else "",
+                "lastName": parts[1] if len(parts) > 1 else "",
+                "phone": phone
+            }
     
     return {"success": True, "phone": phone, "user": user_data}
 
@@ -283,6 +292,41 @@ async def cancel_order(order_id: str):
     updated = db.update_status(order_id, "cancelled")
     asyncio.create_task(notify_cancelled(updated))
     return {"success": True, "status": "cancelled"}
+
+
+# ────────────────────────────────────────────────────────────
+#  POST /api/users/profile — Ism/familya saqlash (signup)
+# ────────────────────────────────────────────────────────────
+class ProfileSaveRequest(BaseModel):
+    phone: str
+    firstName: str
+    lastName: str
+
+@app.post("/api/users/profile")
+def save_profile(body: ProfileSaveRequest):
+    phone = body.phone.strip()
+    if not phone.startswith("+"):
+        phone = "+" + phone
+    if not body.firstName.strip():
+        raise HTTPException(status_code=400, detail="firstName bo'sh bo'lmasin")
+    user = save_registered_user(
+        phone=phone,
+        first_name=body.firstName.strip(),
+        last_name=body.lastName.strip()
+    )
+    return {"success": True, "user": user}
+
+# ────────────────────────────────────────────────────────────
+#  GET /api/users/profile — Profilni olish
+# ────────────────────────────────────────────────────────────
+@app.get("/api/users/profile")
+def get_profile(phone: str):
+    if not phone.startswith("+"):
+        phone = "+" + phone
+    user = get_registered_user(phone)
+    if not user:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+    return user
 
 # ── Ishga tushirish ──────────────────────────────────────────
 if __name__ == "__main__":
