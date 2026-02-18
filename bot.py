@@ -35,28 +35,45 @@ def build_order_message(order: dict) -> str:
     payment_map = {"naqt": "💵 Naqt", "card": "💳 Karta"}
     payment = payment_map.get(order.get("payment", "naqt"), "💵 Naqt")
 
+    customer   = order.get("customer_name", "")
+    phone      = order.get("phone", "")
     extra_phone = order.get("extra_phone")
-    comment = order.get("comment")
-    customer = order.get("customer_name", "")
-    phone = order.get("phone", "")
+    comment    = order.get("comment")
+    coins_used = order.get("coins_used", 0)
+    total      = order.get("total", 0)
 
-    extra_lines = ""
-    if customer or phone:
-        extra_lines += f"👤 <b>Mijoz:</b> {customer} {phone}\n"
-    if extra_phone:
-        extra_lines += f"📞 <b>Qo'shimcha tel:</b> {extra_phone}\n"
+    # Jami qatorini tayyorlash
+    coins_used = coins_used or 0
+    if coins_used > 0:
+        original = total + coins_used * 1000
+        total_line = (
+            f"💳 <b>Jami:</b> {original:,} UZS\n"
+            f"🪙 <b>Coin chegirma:</b> −{coins_used * 1000:,} UZS ({coins_used} coin)\n"
+            f"✅ <b>To'lov:</b> {total:,} UZS\n"
+        )
+    else:
+        total_line = f"💳 <b>Jami:</b> {total:,} UZS\n"
+
+    # Qo'shimcha qatorlar
+    extra = ""
     if comment:
-        extra_lines += f"💬 <b>Izoh:</b> {comment}\n"
+        extra += f"💬 <b>Izoh:</b> {comment}\n"
+    if extra_phone:
+        extra += f"📱 <b>Qo'sh. tel:</b> {extra_phone}\n"
+
+    vaqt = order.get("created_at", "")[:16].replace("T", " ")
 
     return (
         f"🛒 <b>Yangi zakaz #{order['id'][-6:].upper()}</b>\n"
-        f"_______________\n"
+        f"━━━━━━━━━━━━━━━\n"
         f"📍 <b>Manzil:</b> {order['address']}\n\n"
         f"🍽 <b>Tarkib:</b>\n{lines}\n\n"
-        f"💳 <b>Jami:</b> {order['total']:,} UZS\n"
+        f"{total_line}"
         f"💰 <b>To'lov:</b> {payment}\n"
-        f"{extra_lines}"
-        f"⏰ <b>Vaqt:</b> {order['created_at'][:16].replace('T', ' ')}\n\n"
+        f"👤 <b>Mijoz:</b> {customer}\n"
+        f"📞 <b>Telefon:</b> {phone}\n"
+        f"{extra}"
+        f"⏰ <b>Vaqt:</b> {vaqt}\n\n"
         f"{emoji} <b>Status:</b> {label}"
     )
 
