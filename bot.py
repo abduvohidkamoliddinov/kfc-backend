@@ -86,6 +86,19 @@ def _get_app():
     return _app_instance
 
 # ── Yangi zakaz — adminga xabar ─────────────────────────────
+
+async def notify_user(context, phone: str, text: str, reply_markup=None):
+    """Userga Telegram xabar yuborish (telefon orqali chat_id topib)"""
+    try:
+        tg_user = db.get_telegram_user(phone)
+        if tg_user and tg_user.get("chat_id"):
+            kwargs = dict(chat_id=int(tg_user["chat_id"]), text=text, parse_mode="HTML")
+            if reply_markup:
+                kwargs["reply_markup"] = reply_markup
+            await context.bot.send_message(**kwargs)
+    except Exception as e:
+        print(f"Userga xabar yuborishda xato: {e}")
+
 async def notify_new_order(order: dict):
     app = _get_app()
     if not app:
@@ -208,6 +221,20 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     updated = db.update_status(order_id, new_status)
     keyboard = build_keyboard(order_id, new_status)
 
+    # ─── "confirmed" bo'lsa userga tasdiqlash xabari ───
+    if new_status == "confirmed":
+        phone = updated.get("phone")
+        order_short = order_id[-6:].upper()
+        total = updated.get("total", 0)
+        if phone:
+            await notify_user(
+                context, phone,
+                f"✅ <b>Buyurtmangiz tasdiqlandi!</b>\n\n"
+                f"📦 Buyurtma: <b>#{order_short}</b>\n"
+                f"💰 Summa: <b>{total:,} UZS</b>\n\n"
+                f"🍗 Tayyorlanmoqda, tez orada yetkazamiz!"
+            )
+
     # ─── "done" bo'lsa coin qo'shish (5% = har 1000 sum = 1 coin) ───
     if new_status == "done":
         phone = updated.get("phone")
@@ -218,28 +245,21 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if phone:
             new_balance = add_coins(phone=phone, amount=earned, order_id=order_id)
             # Adminga coin haqida xabar
-            coin_msg = (
-                f"\n\n🪙 <b>Coin berildi:</b> +{earned} coin"
-                f"\n💰 Chegirma qiymati: {earned * 1000:,} UZS"
-                f"\n📊 Yangi balans: {new_balance} coin ({new_balance * 1000:,} UZS)"
+            coin_msg = ""
+            # Userga Telegram orqali xabar yuborish (coin + review tugmasi)
+            from telegram import InlineKeyboardMarkup as IKM, InlineKeyboardButton as IKB
+            review_keyboard = IKM([[
+                IKB("⭐ Izoh qoldirish", callback_data=f"review:{order_id}")
+            ]])
+            await notify_user(
+                context, phone,
+                f"🎉 <b>Buyurtmangiz muvaffaqiyatli yetkazildi!</b>\n\n"
+                f"🪙 Tabriklaymiz! Sizga <b>+{earned} coin</b> qo'shildi\n"
+                f"💰 Bu <b>{earned * 1000:,} UZS</b> chegirmaga teng\n"
+                f"📊 Joriy balans: <b>{new_balance} coin</b>\n\n"
+                f"Keyingi zakazda ishlatishingiz mumkin! 🛍",
+                reply_markup=review_keyboard
             )
-            # Userga Telegram orqali xabar yuborish
-            try:
-                tg_user = db.get_telegram_user(phone)
-                if tg_user and tg_user.get("chat_id"):
-                    await context.bot.send_message(
-                        chat_id=int(tg_user["chat_id"]),
-                        text=(
-                            f"🎉 Buyurtmangiz yetkazildi!\n\n"
-                            f"🪙 Sizga <b>+{earned} coin</b> qo'shildi!\n"
-                            f"💰 Bu <b>{earned * 1000:,} UZS</b> ga teng\n"
-                            f"📊 Balans: <b>{new_balance} coin</b> ({new_balance * 1000:,} UZS)\n\n"
-                            f"Keyingi zakazda chegirma sifatida ishlatishingiz mumkin! 🛍"
-                        ),
-                        parse_mode="HTML"
-                    )
-            except Exception as e:
-                print(f"Userga coin xabari yuborishda xato: {e}")
         else:
             coin_msg = ""
     else:
@@ -286,6 +306,45 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
+
+# ── Izoh (review) callback ────────────────────────────────────
+async def review_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not query.data.startswith("review:"):
+        return
+    order_id = query.data.split(":")[1]
+    context.user_data["awaiting_review"] = order_id
+    await query.message.reply_text(
+        f"✍️ <b>Izohingizni yozing</b>\n\n"
+        f"#{order_id[-6:].upper()} buyurtma haqida fikringizni yozing.\n"
+        f"(ovqat mazasi, yetkazib berish tezligi va h.k.)",
+        parse_mode="HTML"
+    )
+
+async def handle_review_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if "awaiting_review" not in context.user_data:
+        return
+    order_id = context.user_data.pop("awaiting_review")
+    review_text = update.message.text
+    user = update.effective_user
+    ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
+    if ADMIN_CHAT_ID:
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=(
+                f"💬 <b>Yangi izoh!</b>\n\n"
+                f"📦 Buyurtma: #{order_id[-6:].upper()}\n"
+                f"👤 {user.full_name} (@{user.username or '-'})\n\n"
+                f"\"{review_text}\""
+            ),
+            parse_mode="HTML"
+        )
+    await update.message.reply_text(
+        "🙏 Rahmat! Izohingiz uchun minnatdormiz. 🍗",
+        parse_mode="HTML"
+    )
+
 # ── App yaratish ─────────────────────────────────────────────
 def create_app() -> Application:
     global _app_instance
@@ -295,6 +354,8 @@ def create_app() -> Application:
     app.add_handler(CommandHandler("orders", cmd_orders))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
-    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(CallbackQueryHandler(handle_callback, pattern="^status:"))
+    app.add_handler(CallbackQueryHandler(review_callback, pattern="^review:"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_review_text))
     _app_instance = app
     return app
