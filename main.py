@@ -103,10 +103,12 @@ class OrderCreate(BaseModel):
 
 class OtpSendRequest(BaseModel):
     phone: str
+    mode: str = "login"   # "signup" yoki "login"
 
 class OtpVerifyRequest(BaseModel):
     phone: str
     code: str
+    mode: str = "login"   # "signup" yoki "login"
 
 # ── Yordamchi funksiya ───────────────────────────────────────
 
@@ -139,7 +141,9 @@ async def otp_send(body: OtpSendRequest):
     phone = body.phone.strip()
     if not phone.startswith("+"):
         phone = "+" + phone
+    mode = body.mode.strip().lower()  # "signup" yoki "login"
 
+    # ── Telegram bot da ro'yxatdan o'tganmi ──
     tg_user = db.get_telegram_user(phone)
     if not tg_user:
         raise HTTPException(
@@ -150,6 +154,30 @@ async def otp_send(body: OtpSendRequest):
             }
         )
 
+    # ── App da ro'yxatdan o'tganmi ──
+    is_registered = get_registered_user(phone) is not None
+
+    # ── Signup: allaqachon ro'yxatdan o'tgan bo'lsa bloklash ──
+    if mode == "signup" and is_registered:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "user_already_exists",
+                "message": "Bu raqam allaqachon ro'yxatdan o'tgan. Kirish sahifasidan foydalaning."
+            }
+        )
+
+    # ── Login: ro'yxatdan o'tmagan bo'lsa bloklash ──
+    if mode == "login" and not is_registered:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "user_not_found",
+                "message": "Bu raqam topilmadi. Ro'yxatdan o'tish sahifasidan foydalaning."
+            }
+        )
+
+    # ── OTP rate limit ──
     existing = db.get_otp(phone)
     if existing:
         remaining = existing["expires_at"] - time.time()
@@ -161,24 +189,18 @@ async def otp_send(body: OtpSendRequest):
 
     code = str(random.randint(100000, 999999))
     expires_at = time.time() + 5 * 60
-
-    db.save_otp(phone=phone, code=code, expires_at=expires_at)
+    db.save_otp(phone=phone, code=code, expires_at=expires_at, mode=mode)
 
     try:
         await send_otp(chat_id=int(tg_user["chat_id"]), code=code)
     except Exception as e:
-        # OTP saqlangan, lekin Telegram yuborishda xato
-        # CORS header bilan qaytarish uchun JSONResponse ishlatamiz
         return JSONResponse(
             status_code=500,
             content={"detail": f"Telegram ga yuborishda xato: {str(e)}. BOT_TOKEN Railway Variables da to'g'ri kiritilganmi?"},
             headers={"Access-Control-Allow-Origin": "*"}
         )
 
-    # Foydalanuvchi allaqachon ro'yxatdan o'tganmi tekshirish
-    is_registered = get_registered_user(phone) is not None
-
-    return {"success": True, "message": "Telegram ga kod yuborildi", "user_exists": is_registered}
+    return {"success": True, "message": "Telegram ga kod yuborildi"}
 
 # ────────────────────────────────────────────────────────────
 #  POST /api/otp/verify — OTP tekshirish
@@ -218,20 +240,23 @@ def otp_verify(body: OtpVerifyRequest):
             detail={"error": "wrong_code", "message": f"Noto'g'ri kod. {left} ta urinish qoldi."}
         )
 
+    mode = getattr(body, "mode", record.get("mode", "login"))
     db.delete_otp(phone)
-    
-    # 1. Avval signup da saqlangan profil tekshiriladi
+
     reg_user = get_registered_user(phone)
+    tg_user  = db.get_telegram_user(phone)
     user_data = None
-    if reg_user:
-        user_data = {
-            "firstName": reg_user.get("firstName", ""),
-            "lastName": reg_user.get("lastName", ""),
-            "phone": phone
-        }
-    else:
-        # 2. Agar yo'q bo'lsa, Telegram full_name ishlatiladi
-        tg_user = db.get_telegram_user(phone)
+
+    if mode == "signup":
+        # ── Signup: yangi user YARATILMAYDI bu yerda ──
+        # Foydalanuvchi keyingi qadamda ism/familya kiritadi (/api/users/profile)
+        # Agar allaqachon mavjud bo'lsa — xato
+        if reg_user:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "user_already_exists", "message": "Bu raqam allaqachon ro'yxatdan o'tgan."}
+            )
+        # Telegram dan vaqtinchalik ma'lumot
         if tg_user and tg_user.get("full_name"):
             parts = tg_user["full_name"].split(" ", 1)
             user_data = {
@@ -239,8 +264,20 @@ def otp_verify(body: OtpVerifyRequest):
                 "lastName": parts[1] if len(parts) > 1 else "",
                 "phone": phone
             }
-    
-    return {"success": True, "phone": phone, "user": user_data}
+    else:
+        # ── Login: faqat mavjud userni qaytarish, HECH QACHON create_user chaqirmaslik ──
+        if not reg_user:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "user_not_found", "message": "Foydalanuvchi topilmadi."}
+            )
+        user_data = {
+            "firstName": reg_user.get("firstName", ""),
+            "lastName":  reg_user.get("lastName", ""),
+            "phone": phone
+        }
+
+    return {"success": True, "phone": phone, "user": user_data, "mode": mode}
 
 # ────────────────────────────────────────────────────────────
 #  POST /api/orders — Yangi zakaz
