@@ -176,11 +176,11 @@ def get_otp(phone: str) -> dict | None:
         codes = _otp_load()
     return next((c for c in codes if c.get("phone") == phone), None)
 
-def save_otp(phone: str, code: str, expires_at: float) -> dict:
+def save_otp(phone: str, code: str, expires_at: float, mode: str = "login") -> dict:
     with _otp_lock:
         codes = _otp_load()
         codes = [c for c in codes if c.get("phone") != phone]
-        record = {"phone": phone, "code": code, "expires_at": expires_at, "attempts": 0}
+        record = {"phone": phone, "code": code, "expires_at": expires_at, "attempts": 0, "mode": mode}
         codes.append(record)
         _otp_save(codes)
     return record
