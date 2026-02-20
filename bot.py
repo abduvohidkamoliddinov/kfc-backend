@@ -35,12 +35,12 @@ def build_order_message(order: dict) -> str:
     payment_map = {"naqt": "💵 Naqt", "card": "💳 Karta"}
     payment = payment_map.get(order.get("payment", "naqt"), "💵 Naqt")
 
-    customer    = order.get("customer_name", "")
-    phone       = order.get("phone", "")
+    customer   = order.get("customer_name", "")
+    phone      = order.get("phone", "")
     extra_phone = order.get("extra_phone")
-    comment     = order.get("comment")
-    coins_used  = order.get("coins_used", 0)
-    total       = order.get("total", 0)
+    comment    = order.get("comment")
+    coins_used = order.get("coins_used", 0)
+    total      = order.get("total", 0)
 
     # Jami qatorini tayyorlash
     coins_used = coins_used or 0
@@ -104,7 +104,7 @@ def _get_app():
 
 # ── Yangi zakaz — adminga xabar ─────────────────────────────
 
-async def notify_user(context: ContextTypes.DEFAULT_TYPE, phone: str, text: str, reply_markup=None):
+async def notify_user(context, phone: str, text: str, reply_markup=None):
     """Userga Telegram xabar yuborish (telefon orqali chat_id topib)"""
     try:
         tg_user = db.get_telegram_user(phone)
@@ -122,7 +122,7 @@ async def notify_new_order(order: dict):
         return
     admin_id = os.getenv("ADMIN_CHAT_ID")
     if not admin_id:
-        print("ADMIN_CHAT_ID yo'q!")
+        print("ADMIN_CHAT_ID yoq!")
         return
     try:
         msg = await app.bot.send_message(
@@ -147,7 +147,7 @@ async def notify_cancelled(order: dict):
         await app.bot.send_message(
             chat_id=int(admin_id),
             text=f"❌ <b>Zakaz bekor qilindi #{order['id'][-6:].upper()}</b>\n"
-             f"💳 {order['total']:,} UZS",
+                 f"💳 {order['total']:,} UZS",
             parse_mode="HTML",
         )
     except Exception as e:
@@ -170,7 +170,7 @@ async def send_otp(chat_id: int, code: str):
     )
 
 # ── /start komandasi ─────────────────────────────────────────
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     admin_id = os.getenv("ADMIN_CHAT_ID", "")
 
@@ -195,7 +195,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ── Kontakt qabul qilish ─────────────────────────────────────
-async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     contact = update.message.contact
     chat_id = update.effective_chat.id
 
@@ -211,16 +211,26 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     full_name = " ".join(filter(None, [contact.first_name, contact.last_name or ""]))
     db.save_telegram_user(phone=phone, chat_id=str(chat_id), full_name=full_name)
 
+    WEBSITE_URL = os.getenv("WEBSITE_URL", "https://your-site.com")
+
     await update.message.reply_text(
-        f"✅ <b>Raqamingiz saqlandi!</b>\n\n"
-        f"📱 {phone}\n\n"
-        f"Endi saytda ro'yxatdan o'tishingiz mumkin 🎉",
+        f"🇺🇿 <b>Assalomu alaykum!</b> 👋\n"
+        f"Buyurtma berish uchun quyidagi tugmani bosing ⬇️\n\n"
+        f"🇷🇺 <b>Здравствуйте!</b> 👋\n"
+        f"Нажмите кнопку ниже, чтобы оформить заказ ⬇️",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove(),
     )
+    await update.message.reply_text(
+        f"✅ <b>Raqamingiz saqlandi:</b> {phone}",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🍗 Ochish / Открыть", url=WEBSITE_URL)
+        ]])
+    )
 
 # ── Callback (inline tugmalar) ───────────────────────────────
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
     data = query.data
@@ -261,6 +271,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         earned = max(1, round(actual_total * 0.05 / 1000))
         if phone:
             new_balance = add_coins(phone=phone, amount=earned, order_id=order_id)
+            # Adminga coin haqida xabar
+            coin_msg = ""
             # Userga Telegram orqali xabar yuborish (coin + review tugmasi)
             from telegram import InlineKeyboardMarkup as IKM, InlineKeyboardButton as IKB
             review_keyboard = IKM([[
@@ -275,7 +287,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Keyingi zakazda ishlatishingiz mumkin! 🛍",
                 reply_markup=review_keyboard
             )
-            coin_msg = ""
         else:
             coin_msg = ""
     else:
@@ -295,7 +306,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer(f"{emoji} {label}")
 
 # ── /orders komandasi ────────────────────────────────────────
-async def cmd_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_orders(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     orders = db.get_all(limit=10)
     if not orders:
         await update.message.reply_text("📭 Hali zakaz yo'q.")
@@ -310,7 +321,7 @@ async def cmd_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ── /stats komandasi ─────────────────────────────────────────
-async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     s = db.stats_today()
     await update.message.reply_text(
         f"📊 <b>Bugungi statistika</b>\n\n"
@@ -339,31 +350,25 @@ async def review_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_review_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("awaiting_review") is None:
+    if "awaiting_review" not in context.user_data:
         return
-    
     order_id = context.user_data.pop("awaiting_review")
     review_text = update.message.text
     user = update.effective_user
-    
-    admin_id_str = os.getenv("ADMIN_CHAT_ID")
-    if admin_id_str:
-        try:
-            await context.bot.send_message(
-                chat_id=int(admin_id_str),
-                text=(
-                    f"💬 <b>Yangi izoh!</b>\n\n"
-                    f"📦 Buyurtma: #{order_id[-6:].upper()}\n"
-                    f"👤 {user.full_name} (@{user.username or '-'})\n\n"
-                    f"<i>\"{review_text}\"</i>"
-                ),
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            print(f"Adminga izoh yuborishda xato: {e}")
-
+    ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
+    if ADMIN_CHAT_ID:
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=(
+                f"💬 <b>Yangi izoh!</b>\n\n"
+                f"📦 Buyurtma: #{order_id[-6:].upper()}\n"
+                f"👤 {user.full_name} (@{user.username or '-'})\n\n"
+                f"\"{review_text}\""
+            ),
+            parse_mode="HTML"
+        )
     await update.message.reply_text(
-        "🙏 Rahmat! Fikringiz biz uchun juda muhim. 🍗",
+        "🙏 Rahmat! Izohingiz uchun minnatdormiz. 🍗",
         parse_mode="HTML"
     )
 
@@ -381,13 +386,3 @@ def create_app() -> Application:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_review_text))
     _app_instance = app
     return app
-
-# ── Botni ishga tushirish ────────────────────────────────────
-if __name__ == "__main__":
-    from dotenv import load_dotenv
-    # .env fayldan BOT_TOKEN va ADMIN_CHAT_ID o'qiladi
-    load_dotenv() 
-    
-    print("🤖 Bot ishga tushmoqda...")
-    application = create_app()
-    application.run_polling()
