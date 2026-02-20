@@ -216,16 +216,10 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     WEBSITE_URL = os.getenv("WEBSITE_URL", "https://your-site.com")
 
-    await update.message.reply_text(
         f"🇺🇿 <b>Assalomu alaykum!</b> 👋\n"
         f"Buyurtma berish uchun quyidagi tugmani bosing ⬇️\n\n"
         f"🇷🇺 <b>Здравствуйте!</b> 👋\n"
         f"Нажмите кнопку ниже, чтобы оформить заказ ⬇️",
-        parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    await update.message.reply_text(
-        f"✅ <b>Raqamingiz saqlandi:</b> {phone}",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("🍗 Ochish / Открыть", url=WEBSITE_URL)
