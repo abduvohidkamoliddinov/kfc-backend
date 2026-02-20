@@ -125,6 +125,15 @@ def health():
 # ────────────────────────────────────────────────────────────
 #  POST /api/otp/send — Telegram orqali OTP yuborish
 # ────────────────────────────────────────────────────────────
+@app.get("/api/check-phone")
+async def check_phone(phone: str):
+    """Telefon raqami allaqachon ro'yxatdan o'tganligini tekshirish"""
+    p = phone.strip()
+    if not p.startswith("+"):
+        p = "+" + p
+    is_registered = get_registered_user(p) is not None
+    return {"exists": is_registered}
+
 @app.post("/api/otp/send")
 async def otp_send(body: OtpSendRequest):
     phone = body.phone.strip()
