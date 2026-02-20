@@ -214,7 +214,7 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     full_name = " ".join(filter(None, [contact.first_name, contact.last_name or ""]))
     db.save_telegram_user(phone=phone, chat_id=str(chat_id), full_name=full_name)
 
-    WEBSITE_URL = os.getenv("WEBSITE_URL", "https://your-site.com")
+    WEBSITE_URL = os.getenv("WEBSITE_URL", "https://kfs-menu.vercel.app")
 
     await update.message.reply_text(
         f"🇺🇿 <b>Assalomu alaykum!</b> 👋\n"
