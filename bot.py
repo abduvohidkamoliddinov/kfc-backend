@@ -228,115 +228,121 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 # ── Callback (inline tugmalar) ───────────────────────────────
-async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
-    data = query.data
-    if not data.startswith("status:"):
-        return
-
-    parts = data.split(":")
-    order_id, new_status = parts[1], parts[2]
-
-    order = db.get_by_id(order_id)
-    if not order:
-        await query.answer("❌ Zakaz topilmadi", show_alert=True)
-        return
-
-    updated = db.update_status(order_id, new_status)
-    keyboard = build_keyboard(order_id, new_status)
-
-    # ─── "ready" bo'lsa kuryerga xabar ───
-    if new_status == "ready":
-        COURIER_CHAT_ID = os.getenv("COURIER_CHAT_ID", "")
-        if COURIER_CHAT_ID:
-            order_short = order_id[-6:].upper()
-            address = updated.get("address", "—")
-            items = updated.get("items", [])
-            items_text = "\n".join(
-                f"  • {i.get('fullName') or i.get('name')} x{i['quantity']}"
-                for i in items
-            )
-            total = updated.get("total", 0)
-            phone = updated.get("phone", "—")
-            customer = updated.get("customer_name", "")
-            courier_keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🚗 Yetkazilmoqda", callback_data=f"courier:{order_id}:delivering"),
-            ]])
-            try:
-                await context.bot.send_message(
-                    chat_id=int(COURIER_CHAT_ID),
-                    text=(
-                        f"📦 <b>Yangi yetkazish #{order_short}</b>\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"📍 <b>Manzil:</b> {address}\n\n"
-                        f"🍽 <b>Tarkib:</b>\n{items_text}\n\n"
-                        f"💳 <b>Jami:</b> {total:,} UZS\n"
-                        f"👤 <b>Mijoz:</b> {customer}\n"
-                        f"📞 <b>Tel:</b> {phone}"
-                    ),
-                    parse_mode="HTML",
-                    reply_markup=courier_keyboard
-                )
-            except Exception as e:
-                print(f"Kuryerga xabar yuborishda xato: {e}")
-
-    # ─── "confirmed" bo'lsa userga tasdiqlash xabari ───
-    if new_status == "confirmed":
-        phone = updated.get("phone")
-        order_short = order_id[-6:].upper()
-        total = updated.get("total", 0)
-        if phone:
-            await notify_user(
-                context, phone,
-                f"✅ <b>Buyurtmangiz tasdiqlandi!</b>\n\n"
-                f"📦 Buyurtma: <b>#{order_short}</b>\n"
-                f"💰 Summa: <b>{total:,} UZS</b>\n\n"
-                f"🍗 Tayyorlanmoqda, tez orada yetkazamiz!"
-            )
-
-    # ─── "done" bo'lsa coin qo'shish (5% = har 1000 sum = 1 coin) ───
-    if new_status == "done":
-        phone = updated.get("phone")
-        total = updated.get("total", 0)
-        coins_used = updated.get("coins_used", 0)
-        actual_total = total + (coins_used * 1000)
-        earned = max(1, round(actual_total * 0.05 / 1000))
-        if phone:
-            new_balance = add_coins(phone=phone, amount=earned, order_id=order_id)
-            # Adminga coin haqida xabar
-            coin_msg = ""
-            # Userga Telegram orqali xabar yuborish (coin + review tugmasi)
-            from telegram import InlineKeyboardMarkup as IKM, InlineKeyboardButton as IKB
-            review_keyboard = IKM([[
-                IKB("⭐ Izoh qoldirish", callback_data=f"review:{order_id}")
-            ]])
-            await notify_user(
-                context, phone,
-                f"🎉 <b>Buyurtmangiz muvaffaqiyatli yetkazildi!</b>\n\n"
-                f"🪙 Tabriklaymiz! Sizga <b>+{earned} coin</b> qo'shildi\n"
-                f"💰 Bu <b>{earned * 1000:,} UZS</b> chegirmaga teng\n"
-                f"📊 Joriy balans: <b>{new_balance} coin</b>\n\n"
-                f"Keyingi zakazda ishlatishingiz mumkin! 🛍",
-                reply_markup=review_keyboard
-            )
-        else:
-            coin_msg = ""
-    else:
-        coin_msg = ""
-
     try:
-        extra = coin_msg if new_status == "done" else ""
-        await query.edit_message_text(
-            text=build_order_message(updated) + extra,
-            parse_mode="HTML",
-            reply_markup=keyboard or InlineKeyboardMarkup([]),
-        )
-    except Exception as e:
-        print(f"Xabarni yangilashda xato: {e}")
+        data = query.data
+        if not data.startswith("status:"):
+            await query.answer()
+            return
 
-    emoji, label = STATUS.get(new_status, ("✅", new_status))
-    await query.answer(f"{emoji} {label}")
+        parts = data.split(":")
+        order_id, new_status = parts[1], parts[2]
+
+        order = db.get_by_id(order_id)
+        if not order:
+            await query.answer("❌ Zakaz topilmadi", show_alert=True)
+            return
+
+        updated = db.update_status(order_id, new_status)
+        keyboard = build_keyboard(order_id, new_status)
+
+        # ─── "ready" bo'lsa kuryerga xabar ───
+        if new_status == "ready":
+            COURIER_CHAT_ID = os.getenv("COURIER_CHAT_ID", "")
+            if COURIER_CHAT_ID:
+                order_short = order_id[-6:].upper()
+                address = updated.get("address", "—")
+                items = updated.get("items", [])
+                items_text = "\n".join(
+                    f"  • {i.get('fullName') or i.get('name')} x{i['quantity']}"
+                    for i in items
+                )
+                total = updated.get("total", 0)
+                phone = updated.get("phone", "—")
+                customer = updated.get("customer_name", "")
+                courier_keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🚗 Yetkazilmoqda", callback_data=f"courier:{order_id}:delivering"),
+                ]])
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(COURIER_CHAT_ID),
+                        text=(
+                            f"📦 <b>Yangi yetkazish #{order_short}</b>\n"
+                            f"━━━━━━━━━━━━━━━\n"
+                            f"📍 <b>Manzil:</b> {address}\n\n"
+                            f"🍽 <b>Tarkib:</b>\n{items_text}\n\n"
+                            f"💳 <b>Jami:</b> {total:,} UZS\n"
+                            f"👤 <b>Mijoz:</b> {customer}\n"
+                            f"📞 <b>Tel:</b> {phone}"
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=courier_keyboard
+                    )
+                except Exception as e:
+                    print(f"Kuryerga xabar yuborishda xato: {e}")
+
+        # ─── "confirmed" bo'lsa userga tasdiqlash xabari ───
+        if new_status == "confirmed":
+            phone = updated.get("phone")
+            order_short = order_id[-6:].upper()
+            total = updated.get("total", 0)
+            if phone:
+                await notify_user(
+                    context, phone,
+                    f"✅ <b>Buyurtmangiz tasdiqlandi!</b>\n\n"
+                    f"📦 Buyurtma: <b>#{order_short}</b>\n"
+                    f"💰 Summa: <b>{total:,} UZS</b>\n\n"
+                    f"🍗 Tayyorlanmoqda, tez orada yetkazamiz!"
+                )
+
+        # ─── "done" bo'lsa coin qo'shish (5% = har 1000 sum = 1 coin) ───
+        coin_msg = ""
+        if new_status == "done":
+            phone = updated.get("phone")
+            total = updated.get("total", 0)
+            coins_used = updated.get("coins_used", 0)
+            actual_total = total + (coins_used * 1000)
+            earned = max(1, round(actual_total * 0.05 / 1000))
+            if phone:
+                new_balance = add_coins(phone=phone, amount=earned, order_id=order_id)
+                # Adminga coin haqida xabar
+                coin_msg = ""
+                # Userga Telegram orqali xabar yuborish (coin + review tugmasi)
+                from telegram import InlineKeyboardMarkup as IKM, InlineKeyboardButton as IKB
+                review_keyboard = IKM([[
+                    IKB("⭐ Izoh qoldirish", callback_data=f"review:{order_id}")
+                ]])
+                await notify_user(
+                    context, phone,
+                    f"🎉 <b>Buyurtmangiz muvaffaqiyatli yetkazildi!</b>\n\n"
+                    f"🪙 Tabriklaymiz! Sizga <b>+{earned} coin</b> qo'shildi\n"
+                    f"💰 Bu <b>{earned * 1000:,} UZS</b> chegirmaga teng\n"
+                    f"📊 Joriy balans: <b>{new_balance} coin</b>\n\n"
+                    f"Keyingi zakazda ishlatishingiz mumkin! 🛍",
+                    reply_markup=review_keyboard
+                )
+
+        try:
+            extra = coin_msg if new_status == "done" else ""
+            await query.edit_message_text(
+                text=build_order_message(updated) + extra,
+                parse_mode="HTML",
+                reply_markup=keyboard or InlineKeyboardMarkup([]),
+            )
+        except Exception as e:
+            print(f"Xabarni yangilashda xato: {e}")
+
+        emoji, label = STATUS.get(new_status, ("✅", new_status))
+        await query.answer(f"{emoji} {label}")
+
+    except Exception as e:
+        print(f"Callback error: {e}")
+        try:
+            await query.answer("❌ Xatolik yuz berdi", show_alert=True)
+        except:
+            pass
 
 # ── /orders komandasi ────────────────────────────────────────
 async def cmd_orders(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
