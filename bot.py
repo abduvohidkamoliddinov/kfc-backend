@@ -17,6 +17,7 @@ STATUS = {
     "pending":    ("🕐", "Kutilmoqda"),
     "confirmed":  ("✅", "Tasdiqlandi"),
     "cooking":    ("🍗", "Tayyorlanmoqda"),
+    "ready":      ("📦", "Kuryer kutmoqda"),
     "delivering": ("🚗", "Yetkazilmoqda"),
     "done":       ("🎉", "Yetkazildi"),
     "cancelled":  ("❌", "Bekor qilindi"),
@@ -91,7 +92,9 @@ def build_keyboard(order_id: str, status: str):
             InlineKeyboardButton("❌ Bekor qilish",   callback_data=f"status:{order_id}:cancelled"),
         ])
     elif status == "cooking":
-        rows.append([InlineKeyboardButton("🚗 Yetkazilmoqda", callback_data=f"status:{order_id}:delivering")])
+        rows.append([InlineKeyboardButton("🍗 Ovqat tayyor", callback_data=f"status:{order_id}:ready")])
+    elif status == "ready":
+        pass  # Kuryer boshqaradi
     elif status == "delivering":
         rows.append([InlineKeyboardButton("🎉 Yetkazildi", callback_data=f"status:{order_id}:done")])
     return InlineKeyboardMarkup(rows) if rows else None
@@ -248,6 +251,41 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     updated = db.update_status(order_id, new_status)
     keyboard = build_keyboard(order_id, new_status)
 
+    # ─── "ready" bo'lsa kuryerga xabar ───
+    if new_status == "ready":
+        COURIER_CHAT_ID = os.getenv("COURIER_CHAT_ID", "")
+        if COURIER_CHAT_ID:
+            order_short = order_id[-6:].upper()
+            address = updated.get("address", "—")
+            items = updated.get("items", [])
+            items_text = "\n".join(
+                f"  • {i.get('fullName') or i.get('name')} x{i['quantity']}"
+                for i in items
+            )
+            total = updated.get("total", 0)
+            phone = updated.get("phone", "—")
+            customer = updated.get("customer_name", "")
+            courier_keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🚗 Yetkazilmoqda", callback_data=f"courier:{order_id}:delivering"),
+            ]])
+            try:
+                await context.bot.send_message(
+                    chat_id=int(COURIER_CHAT_ID),
+                    text=(
+                        f"📦 <b>Yangi yetkazish #{order_short}</b>\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"📍 <b>Manzil:</b> {address}\n\n"
+                        f"🍽 <b>Tarkib:</b>\n{items_text}\n\n"
+                        f"💳 <b>Jami:</b> {total:,} UZS\n"
+                        f"👤 <b>Mijoz:</b> {customer}\n"
+                        f"📞 <b>Tel:</b> {phone}"
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=courier_keyboard
+                )
+            except Exception as e:
+                print(f"Kuryerga xabar yuborishda xato: {e}")
+
     # ─── "confirmed" bo'lsa userga tasdiqlash xabari ───
     if new_status == "confirmed":
         phone = updated.get("phone")
@@ -372,6 +410,79 @@ async def handle_review_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode="HTML"
     )
 
+
+# ── Kuryer callback ───────────────────────────────────────────
+async def courier_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if not data.startswith("courier:"):
+        return
+
+    parts = data.split(":")
+    order_id, action = parts[1], parts[2]
+
+    order = db.get_by_id(order_id)
+    if not order:
+        await query.answer("❌ Zakaz topilmadi", show_alert=True)
+        return
+
+    order_short = order_id[-6:].upper()
+    ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
+
+    if action == "delivering":
+        db.update_status(order_id, "delivering")
+        # Kuryerga "Yetkazildi" tugmasi
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Yetkazildi", callback_data=f"courier:{order_id}:done")
+            ]])
+        )
+        # Adminga xabar
+        if ADMIN_CHAT_ID:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"🚗 <b>Kuryer yo'lda!</b>\n📦 Zakaz #{order_short}",
+                parse_mode="HTML"
+            )
+
+    elif action == "done":
+        updated = db.update_status(order_id, "done")
+        # Kuryerga tasdiqlash
+        await query.edit_message_text(
+            text=f"✅ <b>Zakaz #{order_short} yetkazildi!</b>\n\nRahmat! 🎉",
+            parse_mode="HTML",
+            reply_markup=None
+        )
+        # Adminga xabar
+        if ADMIN_CHAT_ID:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"✅ <b>Zakaz #{order_short} yetkazildi!</b>\nKuryer yetkazib berdi.",
+                parse_mode="HTML"
+            )
+        # Usergа coin + xabar
+        phone = updated.get("phone")
+        if phone:
+            total = updated.get("total", 0)
+            coins_used = updated.get("coins_used", 0)
+            actual_total = total + (coins_used * 1000)
+            earned = max(1, round(actual_total * 0.05 / 1000))
+            new_balance = add_coins(phone=phone, amount=earned, order_id=order_id)
+            review_keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("⭐ Izoh qoldirish", callback_data=f"review:{order_id}")
+            ]])
+            await notify_user(
+                context, phone,
+                f"🎉 <b>Buyurtmangiz muvaffaqiyatli yetkazildi!</b>\n\n"
+                f"🪙 Tabriklaymiz! Sizga <b>+{earned} coin</b> qo'shildi\n"
+                f"💰 Bu <b>{earned * 1000:,} UZS</b> chegirmaga teng\n"
+                f"📊 Joriy balans: <b>{new_balance} coin</b>\n\n"
+                f"Keyingi zakazda ishlatishingiz mumkin! 🛍",
+                reply_markup=review_keyboard
+            )
+
 # ── App yaratish ─────────────────────────────────────────────
 def create_app() -> Application:
     global _app_instance
@@ -383,6 +494,7 @@ def create_app() -> Application:
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(CallbackQueryHandler(handle_callback, pattern="^status:"))
     app.add_handler(CallbackQueryHandler(review_callback, pattern="^review:"))
+    app.add_handler(CallbackQueryHandler(courier_callback, pattern="^courier:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_review_text))
     _app_instance = app
     return app
