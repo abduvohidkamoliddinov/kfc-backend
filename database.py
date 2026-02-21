@@ -290,3 +290,74 @@ def spend_coins(phone: str, amount: int, order_id: str) -> int:
         rec.setdefault("history", []).append({"type": "spend", "amount": amount, "order_id": order_id, "at": __import__("datetime").datetime.utcnow().isoformat()})
         _coins_save(data)
     return rec["balance"]
+
+
+def stats_monthly() -> dict:
+    """
+    Joriy oy statistikasi — bot.py dagi handle_statistics_btn uchun.
+
+    Qaytaradi:
+      month_label : str   — "Fevral 2026"
+      total       : int   — jami zakazlar
+      done        : int   — yetkazildi
+      cancelled   : int   — bekor qilindi
+      revenue     : int   — daromad (UZS)
+      users       : list  — har user uchun {name, phone, total, done, cancelled, revenue}
+                            zakaz soniga qarab kamayish tartibida saralangan
+    """
+    MONTHS_UZ = {
+        "01": "Yanvar",  "02": "Fevral",  "03": "Mart",
+        "04": "Aprel",   "05": "May",     "06": "Iyun",
+        "07": "Iyul",    "08": "Avgust",  "09": "Sentabr",
+        "10": "Oktabr",  "11": "Noyabr",  "12": "Dekabr",
+    }
+
+    now           = datetime.utcnow()
+    current_month = now.strftime("%Y-%m")
+    year, mon_num = current_month.split("-")
+    month_label   = f"{MONTHS_UZ.get(mon_num, mon_num)} {year}"
+
+    with _lock:
+        orders = _load()
+
+    month_orders = [
+        o for o in orders
+        if o.get("created_at", "").startswith(current_month)
+    ]
+
+    # Har user uchun statistika
+    user_map: dict[str, dict] = {}
+    for o in month_orders:
+        phone = o.get("phone", "unknown")
+        if phone not in user_map:
+            user_map[phone] = {
+                "name":      o.get("customer_name", "").strip() or "—",
+                "phone":     phone,
+                "total":     0,   # jami zakaz soni
+                "done":      0,
+                "cancelled": 0,
+                "revenue":   0,
+            }
+        u = user_map[phone]
+        u["total"] += 1
+        status = o.get("status", "")
+        if status == "done":
+            u["done"]    += 1
+            u["revenue"] += o.get("total", 0)
+        elif status == "cancelled":
+            u["cancelled"] += 1
+
+    # Zakaz soniga qarab saralash (ko'pdan kamga)
+    users_sorted = sorted(user_map.values(), key=lambda x: x["total"], reverse=True)
+
+    return {
+        "month_label": month_label,
+        "total":       len(month_orders),
+        "done":        sum(1 for o in month_orders if o.get("status") == "done"),
+        "cancelled":   sum(1 for o in month_orders if o.get("status") == "cancelled"),
+        "revenue":     sum(
+            o.get("total", 0) for o in month_orders
+            if o.get("status") == "done"
+        ),
+        "users":       users_sorted,
+    }
