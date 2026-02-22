@@ -142,7 +142,7 @@ def build_order_message(order: dict) -> str:
         )
 
     return (
-        f"🛒 <b>Yangi zakaz #{order['id'][-6:].upper()}</b>\n"
+        f"🛒 <b>Yangi zakaz #{order['id']}</b>\n"
         f"───────────────\n"
         f"📍 <b>Manzil:</b> {order['address']}\n\n"
         f"🍽 <b>Tarkib:</b>\n{lines}\n\n"
@@ -239,7 +239,7 @@ async def notify_cancelled(order: dict):
         await app.bot.send_message(
             chat_id=int(admin_id),
             text=(
-                f"❌ <b>Zakaz bekor qilindi #{order['id'][-6:].upper()}</b>\n"
+                f"❌ <b>Zakaz bekor qilindi #{order['id']}</b>\n"
                 f"💳 {order['total']:,} UZS\n"
                 f"👤 {order.get('customer_name', '')} {order.get('phone', '')}"
             ),
@@ -438,7 +438,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     emoji, label = STATUS.get(new_status, ("✅", new_status))
     await query.answer(f"{emoji} {label}")
 
-    order_short = order_id[-6:].upper()
+    order_short = order_id
 
     # ── "confirmed" → userga tasdiqlash xabari ──────────────
     if new_status == "confirmed":
@@ -549,7 +549,7 @@ async def courier_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Zakaz topilmadi", show_alert=True)
         return
 
-    order_short = order_id[-6:].upper()
+    order_short = order_id
     admin_id_str = os.getenv("ADMIN_CHAT_ID", "0")
     ADMIN_CHAT  = int(admin_id_str) if admin_id_str.isdigit() else 0
 
@@ -659,7 +659,7 @@ async def review_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await query.message.reply_text(
         f"✍️ <b>Izohingizni yozing</b>\n\n"
-        f"#{order_id[-6:].upper()} buyurtma haqida fikringizni bildiring.\n"
+        f"#{order_id} buyurtma haqida fikringizni bildiring.\n"
         f"(Masalan: ovqat mazasi, yetkazib berish tezligi va h.k.)",
         parse_mode="HTML",
     )
@@ -686,7 +686,7 @@ async def handle_review_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 chat_id=ADMIN_CHAT,
                 text=(
                     f"💬 <b>Yangi izoh!</b>\n\n"
-                    f"📦 Buyurtma: #{order_id[-6:].upper()}\n"
+                    f"📦 Buyurtma: #{order_id}\n"
                     f"👤 {user.full_name} (@{user.username or '—'})\n\n"
                     f"\"{review_text}\""
                 ),
@@ -715,7 +715,7 @@ async def cmd_orders(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for o in orders:
         emoji, label = STATUS.get(o["status"], ("🕐", o["status"]))
         lines.append(
-            f"{emoji} #{o['id'][-6:].upper()} — "
+            f"{emoji} #{o['id']} — "
             f"{o['total']:,} UZS — {label}"
         )
     await update.message.reply_text(
