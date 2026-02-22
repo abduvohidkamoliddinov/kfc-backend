@@ -297,7 +297,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Allaqachon ro'yxatdan o'tganmi? (chat_id bo'yicha tekshirish)
     existing = db.get_telegram_user_by_chat_id(str(chat_id))
     if existing:
-        WEBSITE_URL = os.getenv("WEBSITE_URL", "https://your-site.com")
+        WEBSITE_URL = os.getenv("WEBSITE_URL", "https://kfs-menu.vercel.app/")
         first = (existing.get("full_name") or "").split()[0] or "do'st"
         await update.message.reply_text(
             f"👋 <b>Salom, {first}!</b>\n\n"
@@ -352,7 +352,7 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         phone = "998" + phone[-9:]
     phone = "+" + phone
 
-    WEBSITE_URL = os.getenv("WEBSITE_URL", "https://your-site.com")
+    WEBSITE_URL = os.getenv("WEBSITE_URL", "https://kfs-menu.vercel.app/")
 
     # Klaviaturani yopamiz (ReplyKeyboardRemove yuborib darhol o'chiramiz)
     remove_msg = await update.message.reply_text(
@@ -835,4 +835,3 @@ def create_app() -> Application:
 
     _app_instance = app
     return app
-  
