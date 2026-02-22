@@ -112,7 +112,12 @@ class OtpVerifyRequest(BaseModel):
 
 # ── Yordamchi funksiya ───────────────────────────────────────
 
-async def notify_after_delay(order_id: str, delay: int = 60):
+async def notify_after_delay(order_id: str, delay: int = 65):
+    """
+    65 sekunddan keyin adminga xabar yuboradi.
+    Nima uchun 65? Cancel oynasi 55 sekund — admin har doim
+    cancel muddati tugagandan keyin ko'radi, xavfsiz.
+    """
     await asyncio.sleep(delay)
     order = db.get_by_id(order_id)
     if order and order["status"] != "cancelled":
@@ -125,17 +130,19 @@ def health():
     return {"ok": True, "time": datetime.utcnow().isoformat()}
 
 # ────────────────────────────────────────────────────────────
-#  POST /api/otp/send — Telegram orqali OTP yuborish
+#  GET /api/check-phone — Telefon ro'yxatdan o'tganligini tekshirish
 # ────────────────────────────────────────────────────────────
 @app.get("/api/check-phone")
 async def check_phone(phone: str):
-    """Telefon raqami allaqachon ro'yxatdan o'tganligini tekshirish"""
     p = phone.strip()
     if not p.startswith("+"):
         p = "+" + p
     is_registered = get_registered_user(p) is not None
     return {"exists": is_registered}
 
+# ────────────────────────────────────────────────────────────
+#  POST /api/otp/send — Telegram orqali OTP yuborish
+# ────────────────────────────────────────────────────────────
 @app.post("/api/otp/send")
 async def otp_send(body: OtpSendRequest):
     phone = body.phone.strip()
@@ -243,29 +250,24 @@ def otp_verify(body: OtpVerifyRequest):
     mode = getattr(body, "mode", record.get("mode", "login"))
     db.delete_otp(phone)
 
-    reg_user = get_registered_user(phone)
-    tg_user  = db.get_telegram_user(phone)
+    reg_user  = get_registered_user(phone)
+    tg_user   = db.get_telegram_user(phone)
     user_data = None
 
     if mode == "signup":
-        # ── Signup: yangi user YARATILMAYDI bu yerda ──
-        # Foydalanuvchi keyingi qadamda ism/familya kiritadi (/api/users/profile)
-        # Agar allaqachon mavjud bo'lsa — xato
         if reg_user:
             raise HTTPException(
                 status_code=400,
                 detail={"error": "user_already_exists", "message": "Bu raqam allaqachon ro'yxatdan o'tgan."}
             )
-        # Telegram dan vaqtinchalik ma'lumot
         if tg_user and tg_user.get("full_name"):
             parts = tg_user["full_name"].split(" ", 1)
             user_data = {
                 "firstName": parts[0] if len(parts) > 0 else "",
-                "lastName": parts[1] if len(parts) > 1 else "",
-                "phone": phone
+                "lastName":  parts[1] if len(parts) > 1 else "",
+                "phone":     phone,
             }
     else:
-        # ── Login: faqat mavjud userni qaytarish, HECH QACHON create_user chaqirmaslik ──
         if not reg_user:
             raise HTTPException(
                 status_code=404,
@@ -274,7 +276,7 @@ def otp_verify(body: OtpVerifyRequest):
         user_data = {
             "firstName": reg_user.get("firstName", ""),
             "lastName":  reg_user.get("lastName", ""),
-            "phone": phone
+            "phone":     phone,
         }
 
     return {"success": True, "phone": phone, "user": user_data, "mode": mode}
@@ -284,18 +286,21 @@ def otp_verify(body: OtpVerifyRequest):
 # ────────────────────────────────────────────────────────────
 @app.post("/api/orders", status_code=201)
 async def place_order(body: OrderCreate):
-    order_id = body.id or f"kfc_{int(datetime.utcnow().timestamp() * 1000)}"
+    # Ketma-ket tartib raqam: #0001, #0002, #0003 ...
+    num      = db.next_order_number()
+    order_id = body.id or db.order_id_from_number(num)
+
     order_dict = {
-        "id": order_id,
-        "created_at": body.date or datetime.utcnow().isoformat(),
-        "address": body.address,
-        "items": [i.model_dump() for i in body.items],
-        "total": body.total,
-        "status": "pending",
-        "tg_user_id": body.tg_user_id,
-        "phone": body.phone,
+        "id":            order_id,
+        "created_at":    body.date or datetime.utcnow().isoformat(),
+        "address":       body.address,
+        "items":         [i.model_dump() for i in body.items],
+        "total":         body.total,
+        "status":        "pending",
+        "tg_user_id":    body.tg_user_id,
+        "phone":         body.phone,
         "customer_name": body.customer_name,
-        "coins_used": body.coins_used or 0,
+        "coins_used":    body.coins_used or 0,
     }
     try:
         order = db.create(order_dict)
@@ -320,7 +325,7 @@ async def place_order(body: OrderCreate):
 @app.get("/api/orders")
 def list_orders(status: str | None = None, phone: str | None = None, limit: int = 50, offset: int = 0):
     orders = db.get_all(status=status, phone=phone, limit=limit, offset=offset)
-    total = db.count(status=status, phone=phone)
+    total  = db.count(status=status, phone=phone)
     return {"orders": orders, "total": total}
 
 # ────────────────────────────────────────────────────────────
@@ -345,12 +350,12 @@ async def cancel_order(order_id: str):
         raise HTTPException(400, "Faqat kutilayotgan zakazni bekor qilish mumkin")
     created = datetime.fromisoformat(order["created_at"].replace("Z", "+00:00"))
     elapsed = (datetime.utcnow() - created.replace(tzinfo=None)).total_seconds()
-    if elapsed > 60:
-        raise HTTPException(400, "Bekor qilish vaqti otdi (1 daqiqa)")
+    if elapsed > 55:
+        # 55 sekund: admin 65-sekundda ko'radi, bekor qilish imkoni yo'q
+        raise HTTPException(400, "Bekor qilish vaqti o'tdi (55 sekund)")
     updated = db.update_status(order_id, "cancelled")
     asyncio.create_task(notify_cancelled(updated))
     return {"success": True, "status": "cancelled"}
-
 
 # ────────────────────────────────────────────────────────────
 #  POST /api/users/profile — Ism/familya saqlash (signup)
@@ -370,7 +375,7 @@ def save_profile(body: ProfileSaveRequest):
     user = save_registered_user(
         phone=phone,
         first_name=body.firstName.strip(),
-        last_name=body.lastName.strip()
+        last_name=body.lastName.strip(),
     )
     return {"success": True, "user": user}
 
@@ -385,7 +390,6 @@ def get_profile(phone: str):
     if not user:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
     return user
-
 
 # ────────────────────────────────────────────────────────────
 #  GET /api/coins — Foydalanuvchi coin balansini olish
