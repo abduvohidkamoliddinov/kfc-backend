@@ -15,7 +15,6 @@ from telegram import (
     Update,
     ReplyKeyboardMarkup,
     KeyboardButton,
-    ReplyKeyboardRemove,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
@@ -345,18 +344,11 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     WEBSITE_URL = os.getenv("WEBSITE_URL", "https://your-site.com")
 
-    # 1-xabar: salomlashish
     await update.message.reply_text(
         f"🇺🇿 <b>Assalomu alaykum, {contact.first_name}!</b> 👋\n"
         f"Buyurtma berish uchun tugmani bosing ⬇️\n\n"
         f"🇷🇺 <b>Здравствуйте!</b> 👋\n"
         f"Нажмите кнопку ниже для заказа ⬇️",
-        parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    # 2-xabar: sayt linki
-    await update.message.reply_text(
-        f"✅ <b>Raqamingiz saqlandi:</b> {phone}",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("🍗 Ochish / Открыть", url=WEBSITE_URL)
