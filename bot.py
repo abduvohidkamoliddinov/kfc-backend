@@ -293,7 +293,23 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Oddiy foydalanuvchi
+    # Allaqachon ro'yxatdan o'tganmi? (chat_id bo'yicha tekshirish)
+    existing = db.get_telegram_user_by_chat_id(str(chat_id))
+    if existing:
+        WEBSITE_URL = os.getenv("WEBSITE_URL", "https://your-site.com")
+        first = (existing.get("full_name") or "").split()[0] or "do'st"
+        await update.message.reply_text(
+            f"👋 <b>Salom, {first}!</b>\n\n"
+            f"📱 Raqamingiz saqlangan: <code>{existing.get('phone', '')}</code>\n\n"
+            f"Buyurtma berish uchun saytni oching:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🍗 Ochish / Открыть", url=WEBSITE_URL)
+            ]]),
+        )
+        return
+
+    # Yangi foydalanuvchi — telefon so'raladi
     keyboard = ReplyKeyboardMarkup(
         [[KeyboardButton("📱 Telefon raqamni yuborish", request_contact=True)]],
         resize_keyboard=True,
@@ -301,8 +317,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(
         "👋 <b>KFC Riston</b> ga xush kelibsiz! 🍗\n\n"
-        "Ro'yxatdan o'tish yoki tizimga kirish uchun\n"
-        "telefon raqamingizni yuboring.\n\n"
+        "Ro'yxatdan o'tish uchun telefon raqamingizni yuboring.\n\n"
         "⬇️ Pastdagi tugmani bosing:",
         parse_mode="HTML",
         reply_markup=keyboard,
