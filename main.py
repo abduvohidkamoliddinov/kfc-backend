@@ -287,8 +287,9 @@ def otp_verify(body: OtpVerifyRequest):
 @app.post("/api/orders", status_code=201)
 async def place_order(body: OrderCreate):
     # Ketma-ket tartib raqam: #0001, #0002, #0003 ...
+    # body.id ni e'tiborsiz qoldiramiz — har doim DB counter ishlatiladi
     num      = db.next_order_number()
-    order_id = body.id or db.order_id_from_number(num)
+    order_id = db.order_id_from_number(num)
 
     order_dict = {
         "id":            order_id,
