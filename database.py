@@ -109,189 +109,6 @@ def stats_today() -> dict:
     }
 
 
-# ═══════════════════════════════════════════════════════════════
-#  TELEGRAM USERS — botga /start bosgan foydalanuvchilar
-# ═══════════════════════════════════════════════════════════════
-
-_TG_FILE = Path(__file__).parent / "telegram_users.json"
-_tg_lock = threading.Lock()
-
-def _tg_load() -> list[dict]:
-    if _TG_FILE.exists():
-        try:
-            return json.loads(_TG_FILE.read_text())
-        except Exception:
-            return []
-    return []
-
-def _tg_save(users: list[dict]) -> None:
-    _TG_FILE.write_text(json.dumps(users, ensure_ascii=False, indent=2))
-
-def get_telegram_user(phone: str) -> dict | None:
-    with _tg_lock:
-        users = _tg_load()
-    return next((u for u in users if u.get("phone") == phone), None)
-
-def save_telegram_user(phone: str, chat_id, username: str | None = None, full_name: str | None = None) -> dict:
-    with _tg_lock:
-        users = _tg_load()
-        for u in users:
-            if u.get("phone") == phone:
-                u["chat_id"] = str(chat_id)
-                u["username"] = username
-                u["full_name"] = full_name
-                _tg_save(users)
-                return u
-        user = {"phone": phone, "chat_id": str(chat_id), "username": username, "full_name": full_name}
-        users.append(user)
-        _tg_save(users)
-    return user
-
-def get_telegram_user_by_chat_id(chat_id: int) -> dict | None:
-    with _tg_lock:
-        users = _tg_load()
-    return next((u for u in users if u.get("chat_id") == chat_id), None)
-
-
-# ═══════════════════════════════════════════════════════════════
-#  OTP CODES — tasdiqlash kodlari
-# ═══════════════════════════════════════════════════════════════
-
-_OTP_FILE = Path(__file__).parent / "otp_codes.json"
-_otp_lock = threading.Lock()
-
-def _otp_load() -> list[dict]:
-    if _OTP_FILE.exists():
-        try:
-            return json.loads(_OTP_FILE.read_text())
-        except Exception:
-            return []
-    return []
-
-def _otp_save(codes: list[dict]) -> None:
-    _OTP_FILE.write_text(json.dumps(codes, ensure_ascii=False, indent=2))
-
-def get_otp(phone: str) -> dict | None:
-    with _otp_lock:
-        codes = _otp_load()
-    return next((c for c in codes if c.get("phone") == phone), None)
-
-def save_otp(phone: str, code: str, expires_at: float, mode: str = "login") -> dict:
-    with _otp_lock:
-        codes = _otp_load()
-        codes = [c for c in codes if c.get("phone") != phone]
-        record = {"phone": phone, "code": code, "expires_at": expires_at, "attempts": 0, "mode": mode}
-        codes.append(record)
-        _otp_save(codes)
-    return record
-
-def delete_otp(phone: str) -> None:
-    with _otp_lock:
-        codes = _otp_load()
-        codes = [c for c in codes if c.get("phone") != phone]
-        _otp_save(codes)
-
-def increment_otp_attempts(phone: str) -> int:
-    with _otp_lock:
-        codes = _otp_load()
-        for c in codes:
-            if c.get("phone") == phone:
-                c["attempts"] = c.get("attempts", 0) + 1
-                _otp_save(codes)
-                return c["attempts"]
-    return 0
-
-
-# ═══════════════════════════════════════════════════════════════
-#  REGISTERED USERS — signup da kiritilgan ism/familya
-# ═══════════════════════════════════════════════════════════════
-
-_USERS_FILE = Path(__file__).parent / "registered_users.json"
-_users_lock = threading.Lock()
-
-def _users_load() -> list[dict]:
-    if _USERS_FILE.exists():
-        try:
-            return json.loads(_USERS_FILE.read_text())
-        except Exception:
-            return []
-    return []
-
-def _users_save(users: list[dict]) -> None:
-    _USERS_FILE.write_text(json.dumps(users, ensure_ascii=False, indent=2))
-
-def get_registered_user(phone: str) -> dict | None:
-    with _users_lock:
-        users = _users_load()
-    return next((u for u in users if u.get("phone") == phone), None)
-
-def save_registered_user(phone: str, first_name: str, last_name: str) -> dict:
-    with _users_lock:
-        users = _users_load()
-        for u in users:
-            if u.get("phone") == phone:
-                u["firstName"] = first_name
-                u["lastName"] = last_name
-                _users_save(users)
-                return u
-        user = {"phone": phone, "firstName": first_name, "lastName": last_name}
-        users.append(user)
-        _users_save(users)
-    return user
-
-
-# ═══════════════════════════════════════════════════════════════
-#  COINS — foydalanuvchi coinlari
-# ═══════════════════════════════════════════════════════════════
-
-_COINS_FILE = Path(__file__).parent / "coins.json"
-_coins_lock = threading.Lock()
-
-def _coins_load() -> list[dict]:
-    if _COINS_FILE.exists():
-        try:
-            return json.loads(_COINS_FILE.read_text())
-        except Exception:
-            return []
-    return []
-
-def _coins_save(data: list[dict]) -> None:
-    _COINS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-
-def get_coins(phone: str) -> int:
-    """Foydalanuvchining joriy coin balansini qaytaradi."""
-    with _coins_lock:
-        data = _coins_load()
-    rec = next((r for r in data if r.get("phone") == phone), None)
-    return rec.get("balance", 0) if rec else 0
-
-def add_coins(phone: str, amount: int, order_id: str) -> int:
-    """Coin qo'shadi va yangi balansni qaytaradi. 5% = har 1000 sum uchun 0.05 coin (yaxlit)."""
-    with _coins_lock:
-        data = _coins_load()
-        rec = next((r for r in data if r.get("phone") == phone), None)
-        if rec:
-            rec["balance"] = rec.get("balance", 0) + amount
-            rec.setdefault("history", []).append({"type": "earn", "amount": amount, "order_id": order_id, "at": __import__("datetime").datetime.utcnow().isoformat()})
-        else:
-            rec = {"phone": phone, "balance": amount, "history": [{"type": "earn", "amount": amount, "order_id": order_id, "at": __import__("datetime").datetime.utcnow().isoformat()}]}
-            data.append(rec)
-        _coins_save(data)
-    return rec["balance"]
-
-def spend_coins(phone: str, amount: int, order_id: str) -> int:
-    """Coin sarflaydi va yangi balansni qaytaradi."""
-    with _coins_lock:
-        data = _coins_load()
-        rec = next((r for r in data if r.get("phone") == phone), None)
-        if not rec or rec.get("balance", 0) < amount:
-            raise ValueError("Yetarli coin yo'q")
-        rec["balance"] -= amount
-        rec.setdefault("history", []).append({"type": "spend", "amount": amount, "order_id": order_id, "at": __import__("datetime").datetime.utcnow().isoformat()})
-        _coins_save(data)
-    return rec["balance"]
-
-
 def stats_monthly() -> dict:
     """
     Joriy oy statistikasi — bot.py dagi handle_statistics_btn uchun.
@@ -333,7 +150,7 @@ def stats_monthly() -> dict:
             user_map[phone] = {
                 "name":      o.get("customer_name", "").strip() or "—",
                 "phone":     phone,
-                "total":     0,   # jami zakaz soni
+                "total":     0,
                 "done":      0,
                 "cancelled": 0,
                 "revenue":   0,
@@ -347,7 +164,6 @@ def stats_monthly() -> dict:
         elif status == "cancelled":
             u["cancelled"] += 1
 
-    # Zakaz soniga qarab saralash (ko'pdan kamga)
     users_sorted = sorted(user_map.values(), key=lambda x: x["total"], reverse=True)
 
     return {
@@ -361,3 +177,284 @@ def stats_monthly() -> dict:
         ),
         "users":       users_sorted,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ORDER COUNTER — ketma-ket tartib raqam (#0001, #0002 ...)
+# ═══════════════════════════════════════════════════════════════
+
+_COUNTER_FILE = Path(__file__).parent / "order_counter.json"
+_counter_lock = threading.Lock()
+
+
+def _counter_load() -> int:
+    if _COUNTER_FILE.exists():
+        try:
+            return int(json.loads(_COUNTER_FILE.read_text()).get("last", 0))
+        except Exception:
+            return 0
+    return 0
+
+
+def next_order_number() -> int:
+    """Atomik ravishda keyingi tartib raqamni qaytaradi (1, 2, 3 ...)."""
+    with _counter_lock:
+        num = _counter_load() + 1
+        _COUNTER_FILE.write_text(json.dumps({"last": num}))
+    return num
+
+
+def order_id_from_number(num: int) -> str:
+    """Tartib raqamdan order ID hosil qiladi: 1 → '0001', 999 → '0999'."""
+    return str(num).zfill(4)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  TELEGRAM USERS — botga /start bosgan foydalanuvchilar
+# ═══════════════════════════════════════════════════════════════
+
+_TG_FILE = Path(__file__).parent / "telegram_users.json"
+_tg_lock = threading.Lock()
+
+
+def _tg_load() -> list[dict]:
+    if _TG_FILE.exists():
+        try:
+            return json.loads(_TG_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+
+def _tg_save(users: list[dict]) -> None:
+    _TG_FILE.write_text(json.dumps(users, ensure_ascii=False, indent=2))
+
+
+def get_telegram_user(phone: str) -> dict | None:
+    with _tg_lock:
+        users = _tg_load()
+    return next((u for u in users if u.get("phone") == phone), None)
+
+
+def get_telegram_user_by_chat_id(chat_id) -> dict | None:
+    """chat_id bo'yicha userni topadi (str yoki int bo'lishi mumkin)."""
+    chat_id_str = str(chat_id)
+    with _tg_lock:
+        users = _tg_load()
+    return next((u for u in users if str(u.get("chat_id", "")) == chat_id_str), None)
+
+
+def save_telegram_user(
+    phone: str,
+    chat_id,
+    username: str | None = None,
+    full_name: str | None = None,
+) -> dict:
+    with _tg_lock:
+        users = _tg_load()
+        for u in users:
+            if u.get("phone") == phone:
+                u["chat_id"]   = str(chat_id)
+                u["username"]  = username
+                u["full_name"] = full_name
+                _tg_save(users)
+                return u
+        user = {
+            "phone":     phone,
+            "chat_id":   str(chat_id),
+            "username":  username,
+            "full_name": full_name,
+            "coins":     0,
+        }
+        users.append(user)
+        _tg_save(users)
+    return user
+
+
+def update_telegram_user_coins(phone: str, coins: int) -> None:
+    """telegram_users.json dagi coin balansini yangilaydi."""
+    with _tg_lock:
+        users = _tg_load()
+        for u in users:
+            if u.get("phone") == phone:
+                u["coins"] = coins
+                _tg_save(users)
+                return
+
+
+# ═══════════════════════════════════════════════════════════════
+#  OTP CODES — tasdiqlash kodlari
+# ═══════════════════════════════════════════════════════════════
+
+_OTP_FILE = Path(__file__).parent / "otp_codes.json"
+_otp_lock = threading.Lock()
+
+
+def _otp_load() -> list[dict]:
+    if _OTP_FILE.exists():
+        try:
+            return json.loads(_OTP_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+
+def _otp_save(codes: list[dict]) -> None:
+    _OTP_FILE.write_text(json.dumps(codes, ensure_ascii=False, indent=2))
+
+
+def get_otp(phone: str) -> dict | None:
+    with _otp_lock:
+        codes = _otp_load()
+    return next((c for c in codes if c.get("phone") == phone), None)
+
+
+def save_otp(
+    phone: str,
+    code: str,
+    expires_at: float,
+    mode: str = "login",
+) -> dict:
+    with _otp_lock:
+        codes = _otp_load()
+        codes = [c for c in codes if c.get("phone") != phone]
+        record = {
+            "phone":      phone,
+            "code":       code,
+            "expires_at": expires_at,
+            "attempts":   0,
+            "mode":       mode,
+        }
+        codes.append(record)
+        _otp_save(codes)
+    return record
+
+
+def delete_otp(phone: str) -> None:
+    with _otp_lock:
+        codes = _otp_load()
+        codes = [c for c in codes if c.get("phone") != phone]
+        _otp_save(codes)
+
+
+def increment_otp_attempts(phone: str) -> int:
+    with _otp_lock:
+        codes = _otp_load()
+        for c in codes:
+            if c.get("phone") == phone:
+                c["attempts"] = c.get("attempts", 0) + 1
+                _otp_save(codes)
+                return c["attempts"]
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════
+#  REGISTERED USERS — signup da kiritilgan ism/familya
+# ═══════════════════════════════════════════════════════════════
+
+_USERS_FILE = Path(__file__).parent / "registered_users.json"
+_users_lock = threading.Lock()
+
+
+def _users_load() -> list[dict]:
+    if _USERS_FILE.exists():
+        try:
+            return json.loads(_USERS_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+
+def _users_save(users: list[dict]) -> None:
+    _USERS_FILE.write_text(json.dumps(users, ensure_ascii=False, indent=2))
+
+
+def get_registered_user(phone: str) -> dict | None:
+    with _users_lock:
+        users = _users_load()
+    return next((u for u in users if u.get("phone") == phone), None)
+
+
+def save_registered_user(phone: str, first_name: str, last_name: str) -> dict:
+    with _users_lock:
+        users = _users_load()
+        for u in users:
+            if u.get("phone") == phone:
+                u["firstName"] = first_name
+                u["lastName"]  = last_name
+                _users_save(users)
+                return u
+        user = {"phone": phone, "firstName": first_name, "lastName": last_name}
+        users.append(user)
+        _users_save(users)
+    return user
+
+
+# ═══════════════════════════════════════════════════════════════
+#  COINS — foydalanuvchi coinlari
+# ═══════════════════════════════════════════════════════════════
+
+_COINS_FILE = Path(__file__).parent / "coins.json"
+_coins_lock = threading.Lock()
+
+
+def _coins_load() -> list[dict]:
+    if _COINS_FILE.exists():
+        try:
+            return json.loads(_COINS_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+
+def _coins_save(data: list[dict]) -> None:
+    _COINS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def get_coins(phone: str) -> int:
+    """Foydalanuvchining joriy coin balansini qaytaradi."""
+    with _coins_lock:
+        data = _coins_load()
+    rec = next((r for r in data if r.get("phone") == phone), None)
+    return rec.get("balance", 0) if rec else 0
+
+
+def add_coins(phone: str, amount: int, order_id: str) -> int:
+    """Coin qo'shadi va yangi balansni qaytaradi."""
+    now_str = datetime.utcnow().isoformat()
+    with _coins_lock:
+        data = _coins_load()
+        rec  = next((r for r in data if r.get("phone") == phone), None)
+        if rec:
+            rec["balance"] = rec.get("balance", 0) + amount
+            rec.setdefault("history", []).append({
+                "type": "earn", "amount": amount,
+                "order_id": order_id, "at": now_str,
+            })
+        else:
+            rec = {
+                "phone":   phone,
+                "balance": amount,
+                "history": [{"type": "earn", "amount": amount,
+                             "order_id": order_id, "at": now_str}],
+            }
+            data.append(rec)
+        _coins_save(data)
+    return rec["balance"]
+
+
+def spend_coins(phone: str, amount: int, order_id: str) -> int:
+    """Coin sarflaydi va yangi balansni qaytaradi."""
+    now_str = datetime.utcnow().isoformat()
+    with _coins_lock:
+        data = _coins_load()
+        rec  = next((r for r in data if r.get("phone") == phone), None)
+        if not rec or rec.get("balance", 0) < amount:
+            raise ValueError("Yetarli coin yo'q")
+        rec["balance"] -= amount
+        rec.setdefault("history", []).append({
+            "type": "spend", "amount": amount,
+            "order_id": order_id, "at": now_str,
+        })
+        _coins_save(data)
+    return rec["balance"]
