@@ -14,6 +14,7 @@ import os
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
@@ -351,13 +352,38 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         phone = "998" + phone[-9:]
     phone = "+" + phone
 
+    WEBSITE_URL = os.getenv("WEBSITE_URL", "https://your-site.com")
+
+    # Klaviaturani yopamiz (ReplyKeyboardRemove yuborib darhol o'chiramiz)
+    remove_msg = await update.message.reply_text(
+        "⏳", reply_markup=ReplyKeyboardRemove()
+    )
+    try:
+        await remove_msg.delete()
+    except Exception:
+        pass
+
+    # Allaqachon ro'yxatdan o'tganmi? — qayta saqlamaymiz
+    existing = db.get_telegram_user_by_chat_id(str(chat_id))
+    if existing:
+        first = (existing.get("full_name") or contact.first_name or "do'st").split()[0]
+        await update.message.reply_text(
+            f"👋 <b>Salom, {first}!</b>\n\n"
+            f"📱 Raqamingiz allaqachon saqlangan: <code>{existing.get('phone', '')}</code>\n\n"
+            f"Buyurtma berish uchun saytni oching:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🍗 Ochish / Открыть", url=WEBSITE_URL)
+            ]]),
+        )
+        return
+
+    # Yangi user — saqlash
     full_name = " ".join(filter(None, [
         contact.first_name,
         contact.last_name or "",
     ]))
     db.save_telegram_user(phone=phone, chat_id=str(chat_id), full_name=full_name)
-
-    WEBSITE_URL = os.getenv("WEBSITE_URL", "https://your-site.com")
 
     await update.message.reply_text(
         f"🇺🇿 <b>Assalomu alaykum, {contact.first_name}!</b> 👋\n"
@@ -809,3 +835,4 @@ def create_app() -> Application:
 
     _app_instance = app
     return app
+  
