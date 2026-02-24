@@ -144,6 +144,10 @@ class OrderCreate(BaseModel):
     phone: str | None = None
     customer_name: str | None = None
     coins_used: int | None = None
+    payment: str | None = "naqt"
+    extra_phone: str | None = None
+    comment: str | None = None
+
 
     @field_validator("items")
     @classmethod
@@ -381,6 +385,9 @@ async def place_order(body: OrderCreate):
         "phone": phone,
         "customer_name": body.customer_name,
         "coins_used": int(body.coins_used or 0),
+        "payment": body.payment or "naqt",
+        "extra_phone": body.extra_phone,
+        "comment": body.comment,
     }
 
     try:
