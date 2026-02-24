@@ -1,22 +1,50 @@
 """
-database.py — JSON fayl orqali zakazlarni saqlash (atomik write + status flow + OTP created_at + coin idempotency)
+database.py — JSON fayllar orqali data saqlash (Railway Volume ready)
+
+✅ DATA_DIR qo‘llab-quvvatlaydi:
+- Agar DATA_DIR=/data bo‘lsa → hamma jsonlar /data ga yoziladi (Persistent Volume)
+- Agar DATA_DIR berilmasa → loyiha papkasida ishlaydi (local/dev)
+
+✅ Order counter reset bo‘lmaydi:
+- order_counter.json + orders.json dagi eng katta ID bilan sync qiladi
 """
+
 import json
 import os
 import threading
-import time
 from datetime import datetime
 from pathlib import Path
 
-DB_FILE = Path(os.getenv("DB_FILE", "orders.json"))
+
+# ═══════════════════════════════════════════════════════════════
+#  DATA DIR (Railway volume)
+# ═══════════════════════════════════════════════════════════════
+
+DATA_DIR = Path(os.getenv("DATA_DIR", str(Path(__file__).parent))).resolve()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DB_FILE = Path(os.getenv("DB_FILE", str(DATA_DIR / "orders.json"))).resolve()
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ATOMIC WRITE helper
+# ═══════════════════════════════════════════════════════════════
+
+def _atomic_write(path: Path, content: str) -> None:
+    """
+    Atomik yozish (yarim yozilib qolishdan saqlaydi).
+    Windows/Linux mos.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ORDERS (orders.json)
+# ═══════════════════════════════════════════════════════════════
 
 _lock = threading.Lock()  # bir vaqtda yozishdan himoya
-
-
-def _atomic_write(path: Path, data: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(data, encoding="utf-8")
-    os.replace(tmp, path)
 
 
 def _load() -> list[dict]:
@@ -32,35 +60,20 @@ def _save(orders: list[dict]) -> None:
     _atomic_write(DB_FILE, json.dumps(orders, ensure_ascii=False, indent=2))
 
 
-# ───────────────────────────────────────────────────────────────
-# Status flow (faqat oldinga)
-# ───────────────────────────────────────────────────────────────
-
-_ALLOWED_FLOW = ["pending", "confirmed", "cooking", "ready", "delivering", "done"]
-_TERMINAL = {"done", "cancelled"}
-
-
-def _can_move(old: str, new: str) -> bool:
-    if old == new:
-        return True
-    if old in _TERMINAL:
-        return False
-    if new == "cancelled":
-        return old == "pending"
-    if old not in _ALLOWED_FLOW or new not in _ALLOWED_FLOW:
-        return True  # noma'lum bo'lsa bloklamaymiz
-    return _ALLOWED_FLOW.index(new) >= _ALLOWED_FLOW.index(old)
-
-
-# ── Public API ───────────────────────────────────────────────
-
-def get_all(status: str | None = None, phone: str | None = None, limit: int = 50, offset: int = 0) -> list[dict]:
+def get_all(
+    status: str | None = None,
+    phone: str | None = None,
+    limit: int = 50,
+    offset: int = 0
+) -> list[dict]:
     with _lock:
         orders = _load()
+
     if status:
         orders = [o for o in orders if o.get("status") == status]
     if phone:
         orders = [o for o in orders if o.get("phone") == phone]
+
     orders.sort(key=lambda o: o.get("created_at", ""), reverse=True)
     return orders[offset: offset + limit]
 
@@ -76,12 +89,15 @@ def create(order: dict) -> dict:
         orders = _load()
         if any(o.get("id") == order.get("id") for o in orders):
             raise ValueError("DUPLICATE_ID")
+
         order["created_at"] = order.get("created_at") or datetime.utcnow().isoformat()
         order["status"] = order.get("status") or "pending"
         order.setdefault("tg_msg_id", None)
         order.setdefault("tg_user_id", None)
+
         orders.append(order)
         _save(orders)
+
     return order
 
 
@@ -90,9 +106,6 @@ def update_status(order_id: str, status: str) -> dict | None:
         orders = _load()
         for o in orders:
             if o.get("id") == order_id:
-                old = o.get("status", "pending")
-                if not _can_move(old, status):
-                    return o
                 o["status"] = status
                 _save(orders)
                 return o
@@ -112,6 +125,7 @@ def update_tg_msg_id(order_id: str, msg_id: int) -> None:
 def count(status: str | None = None, phone: str | None = None) -> int:
     with _lock:
         orders = _load()
+
     if status:
         orders = [o for o in orders if o.get("status") == status]
     if phone:
@@ -123,6 +137,7 @@ def stats_today() -> dict:
     today = datetime.utcnow().date().isoformat()
     with _lock:
         orders = _load()
+
     today_orders = [o for o in orders if str(o.get("created_at", "")).startswith(today)]
     return {
         "total":     len(today_orders),
@@ -167,8 +182,10 @@ def stats_monthly() -> dict:
                 "cancelled": 0,
                 "revenue":   0,
             }
+
         u = user_map[phone]
         u["total"] += 1
+
         st = o.get("status", "")
         if st == "done":
             u["done"] += 1
@@ -189,10 +206,10 @@ def stats_monthly() -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
-# ORDER COUNTER
+#  ORDER COUNTER (order_counter.json) — reset bo‘lmasin
 # ═══════════════════════════════════════════════════════════════
 
-_COUNTER_FILE = Path(__file__).parent / "order_counter.json"
+_COUNTER_FILE = DATA_DIR / "order_counter.json"
 _counter_lock = threading.Lock()
 
 
@@ -205,11 +222,38 @@ def _counter_load() -> int:
     return 0
 
 
+def _max_order_number_from_orders() -> int:
+    """
+    orders.json ichidan eng katta raqamli id ni topadi.
+    ID raqam bo‘lsa (masalan '0001', '0123') ishlaydi.
+    """
+    try:
+        with _lock:
+            orders = _load()
+        mx = 0
+        for o in orders:
+            oid = str(o.get("id", "")).strip()
+            if oid.isdigit():
+                mx = max(mx, int(oid))
+        return mx
+    except Exception:
+        return 0
+
+
 def next_order_number() -> int:
+    """
+    Deploy/restart bo‘lsa ham 0001ga qaytmasin:
+    - order_counter.json
+    - orders.json dagi max id
+    ikkalasidan kattasini olib +1 qiladi.
+    """
     with _counter_lock:
-        num = _counter_load() + 1
-        _atomic_write(_COUNTER_FILE, json.dumps({"last": num}))
-    return num
+        last_file = _counter_load()
+        last_db = _max_order_number_from_orders()
+        last = max(last_file, last_db)
+        num = last + 1
+        _atomic_write(_COUNTER_FILE, json.dumps({"last": num}, ensure_ascii=False))
+        return num
 
 
 def order_id_from_number(num: int) -> str:
@@ -217,10 +261,10 @@ def order_id_from_number(num: int) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-# TELEGRAM USERS
+#  TELEGRAM USERS (telegram_users.json)
 # ═══════════════════════════════════════════════════════════════
 
-_TG_FILE = Path(__file__).parent / "telegram_users.json"
+_TG_FILE = DATA_DIR / "telegram_users.json"
 _tg_lock = threading.Lock()
 
 
@@ -250,7 +294,12 @@ def get_telegram_user_by_chat_id(chat_id) -> dict | None:
     return next((u for u in users if str(u.get("chat_id", "")) == chat_id_str), None)
 
 
-def save_telegram_user(phone: str, chat_id, username: str | None = None, full_name: str | None = None) -> dict:
+def save_telegram_user(
+    phone: str,
+    chat_id,
+    username: str | None = None,
+    full_name: str | None = None,
+) -> dict:
     with _tg_lock:
         users = _tg_load()
         for u in users:
@@ -258,24 +307,37 @@ def save_telegram_user(phone: str, chat_id, username: str | None = None, full_na
                 u["chat_id"] = str(chat_id)
                 u["username"] = username
                 u["full_name"] = full_name
+                u.setdefault("coins", 0)
                 _tg_save(users)
                 return u
+
         user = {
             "phone": phone,
             "chat_id": str(chat_id),
             "username": username,
             "full_name": full_name,
+            "coins": 0,
         }
         users.append(user)
         _tg_save(users)
-    return user
+        return user
+
+
+def update_telegram_user_coins(phone: str, coins: int) -> None:
+    with _tg_lock:
+        users = _tg_load()
+        for u in users:
+            if u.get("phone") == phone:
+                u["coins"] = coins
+                _tg_save(users)
+                return
 
 
 # ═══════════════════════════════════════════════════════════════
-# OTP CODES
+#  OTP CODES (otp_codes.json)
 # ═══════════════════════════════════════════════════════════════
 
-_OTP_FILE = Path(__file__).parent / "otp_codes.json"
+_OTP_FILE = DATA_DIR / "otp_codes.json"
 _otp_lock = threading.Lock()
 
 
@@ -306,13 +368,12 @@ def save_otp(phone: str, code: str, expires_at: float, mode: str = "login") -> d
             "phone": phone,
             "code": code,
             "expires_at": expires_at,
-            "created_at": time.time(),  # ✅ cooldown uchun
             "attempts": 0,
             "mode": mode,
         }
         codes.append(record)
         _otp_save(codes)
-    return record
+        return record
 
 
 def delete_otp(phone: str) -> None:
@@ -334,10 +395,10 @@ def increment_otp_attempts(phone: str) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════
-# REGISTERED USERS
+#  REGISTERED USERS (registered_users.json)
 # ═══════════════════════════════════════════════════════════════
 
-_USERS_FILE = Path(__file__).parent / "registered_users.json"
+_USERS_FILE = DATA_DIR / "registered_users.json"
 _users_lock = threading.Lock()
 
 
@@ -369,17 +430,18 @@ def save_registered_user(phone: str, first_name: str, last_name: str) -> dict:
                 u["lastName"] = last_name
                 _users_save(users)
                 return u
+
         user = {"phone": phone, "firstName": first_name, "lastName": last_name}
         users.append(user)
         _users_save(users)
-    return user
+        return user
 
 
 # ═══════════════════════════════════════════════════════════════
-# COINS (coins.json) — idempotent earn (order_id bo‘yicha 1 marta)
+#  COINS (coins.json)
 # ═══════════════════════════════════════════════════════════════
 
-_COINS_FILE = Path(__file__).parent / "coins.json"
+_COINS_FILE = DATA_DIR / "coins.json"
 _coins_lock = threading.Lock()
 
 
@@ -408,21 +470,29 @@ def add_coins(phone: str, amount: int, order_id: str) -> int:
     with _coins_lock:
         data = _coins_load()
         rec = next((r for r in data if r.get("phone") == phone), None)
-        if not rec:
-            rec = {"phone": phone, "balance": 0, "history": []}
+        if rec:
+            rec["balance"] = int(rec.get("balance", 0) or 0) + int(amount)
+            rec.setdefault("history", []).append({
+                "type": "earn",
+                "amount": int(amount),
+                "order_id": order_id,
+                "at": now_str,
+            })
+        else:
+            rec = {
+                "phone": phone,
+                "balance": int(amount),
+                "history": [{
+                    "type": "earn",
+                    "amount": int(amount),
+                    "order_id": order_id,
+                    "at": now_str,
+                }],
+            }
             data.append(rec)
 
-        hist = rec.setdefault("history", [])
-
-        # ✅ idempotency: shu order uchun earn bo'lsa qayta qo'shmaymiz
-        if any(h.get("type") == "earn" and h.get("order_id") == order_id for h in hist):
-            _coins_save(data)
-            return int(rec.get("balance", 0) or 0)
-
-        rec["balance"] = int(rec.get("balance", 0) or 0) + int(amount or 0)
-        hist.append({"type": "earn", "amount": int(amount or 0), "order_id": order_id, "at": now_str})
         _coins_save(data)
-    return int(rec["balance"])
+        return int(rec["balance"])
 
 
 def spend_coins(phone: str, amount: int, order_id: str) -> int:
@@ -430,9 +500,16 @@ def spend_coins(phone: str, amount: int, order_id: str) -> int:
     with _coins_lock:
         data = _coins_load()
         rec = next((r for r in data if r.get("phone") == phone), None)
-        if not rec or int(rec.get("balance", 0) or 0) < int(amount or 0):
+        if not rec or int(rec.get("balance", 0) or 0) < int(amount):
             raise ValueError("Yetarli coin yo'q")
-        rec["balance"] = int(rec.get("balance", 0) or 0) - int(amount or 0)
-        rec.setdefault("history", []).append({"type": "spend", "amount": int(amount or 0), "order_id": order_id, "at": now_str})
+
+        rec["balance"] = int(rec.get("balance", 0) or 0) - int(amount)
+        rec.setdefault("history", []).append({
+            "type": "spend",
+            "amount": int(amount),
+            "order_id": order_id,
+            "at": now_str,
+        })
+
         _coins_save(data)
-    return int(rec["balance"])
+        return int(rec["balance"])
