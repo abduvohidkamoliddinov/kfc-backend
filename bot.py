@@ -156,8 +156,8 @@ def build_order_message(order: dict, title: str = "Yangi zakaz") -> str:
         f"━━━━━━━━━━━━━━━\n"
         f"📍 <b>Manzil:</b> {address}\n\n"
         f"🍽 <b>Tarkib:</b>\n{items_text}\n\n"
-        f"💰 <b><u>{total:,} UZS</u></b>\n"
-        f"💳 <b>To'lov:</b> {payment}\n"
+        f"💳 <b>Jami:</b> <b><u>{total:,} UZS</u></b>\n"
+        f"💰 <b>To'lov:</b> {payment}\n"
         f"👤 <b>Mijoz:</b> {customer}\n"
         f"📞 <b>Telefon:</b> {phone}\n"
     )
@@ -172,8 +172,7 @@ def build_order_message(order: dict, title: str = "Yangi zakaz") -> str:
         f"{emoji} <b>Status:</b> {label}"
     )
     return text
-
-
+  
 # ═══════════════════════════════════════════════════════════════
 # KEYBOARDS (Admin/Courier)
 # ═══════════════════════════════════════════════════════════════
