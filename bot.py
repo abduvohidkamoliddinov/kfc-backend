@@ -88,8 +88,10 @@ def _maps_url(address: str) -> str:
 
 
 def _tel_url(phone: str) -> str:
-    p = (phone or "").strip()
-    return f"tel:{p}" if p else "tel:+998000000000"
+    p = (phone or "").strip().replace(" ", "").replace("-", "")
+    if not p.startswith("+"):
+        p = "+" + p
+    return f"https://t.me/+{p.lstrip('+')}"
 
 
 # ═══════════════════════════════════════════════════════════════
