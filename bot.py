@@ -1,17 +1,26 @@
 """
-bot.py — Telegram Admin Bot + OTP yuborish
+bot.py — Telegram Admin + Courier Bot + OTP
 python-telegram-bot 21.x
 
-✅ Yaxshilanganlari:
-- Admin / Courier authorization (ruxsat tekshiruvi)
-- Status flow: pending → confirmed → cooking → ready → delivering → done (cancel faqat pending)
-- build_order_message() xavfsiz (price/quantity/created_at yo'q bo'lsa yiqilmaydi)
-- Coin: db.add_coins() idempotent bo'lsa (order_id bo'yicha 1 marta) double bo'lmaydi
-- Review: done'dan keyin user izoh qoldiradi
-- Admin: 📊 Statistika (oylik)
+✅ Admin:
+  - pending → confirmed → cooking → ready
+  - pending dan cancelled
+  - 📞 Call + 📍 Maps tugmalar
+✅ Courier:
+  - ready → delivering → done
+  - 📞 Call + 📍 Maps tugmalar
+✅ User notify:
+  - confirmed / ready / delivering / done / cancelled
+✅ Coin + Review:
+  - done bo'lganda userga 5% coin (har 1000 UZS = 1 coin, min 1)
+  - done bo'lganda "⭐ Izoh qoldirish" tugmasi
+✅ OTP:
+  - send_otp(chat_id, code)
 """
+
 import os
 from typing import Optional
+from urllib.parse import quote_plus
 
 from telegram import (
     Update,
@@ -32,8 +41,9 @@ from telegram.ext import (
 
 import database as db
 
+
 # ═══════════════════════════════════════════════════════════════
-#  STATUS lug'ati + flow
+# STATUS + FLOW
 # ═══════════════════════════════════════════════════════════════
 
 STATUS = {
@@ -49,16 +59,19 @@ STATUS = {
 FLOW = ["pending", "confirmed", "cooking", "ready", "delivering", "done"]
 TERMINAL = {"done", "cancelled"}
 
+PAYMENT_MAP = {"naqt": "💵 Naqt", "card": "💳 Karta"}
 
-def _is_admin_chat(chat_id: int) -> bool:
+
+def _is_admin(chat_id: int) -> bool:
     return str(chat_id) == str(os.getenv("ADMIN_CHAT_ID", ""))
 
 
-def _is_courier_chat(chat_id: int) -> bool:
+def _is_courier(chat_id: int) -> bool:
     return str(chat_id) == str(os.getenv("COURIER_CHAT_ID", ""))
 
 
 def _can_move(old: str, new: str) -> bool:
+    """Bot darajasida status flow tekshiruvi."""
     if old == new:
         return True
     if old in TERMINAL:
@@ -70,8 +83,17 @@ def _can_move(old: str, new: str) -> bool:
     return FLOW.index(new) >= FLOW.index(old)
 
 
+def _maps_url(address: str) -> str:
+    return f"https://www.google.com/maps/search/?api=1&query={quote_plus(address or '')}"
+
+
+def _tel_url(phone: str) -> str:
+    p = (phone or "").strip()
+    return f"tel:{p}" if p else "tel:+998000000000"
+
+
 # ═══════════════════════════════════════════════════════════════
-#  User bildirishnoma yordamchisi
+# USER NOTIFY (phone -> chat_id)
 # ═══════════════════════════════════════════════════════════════
 
 async def notify_user(
@@ -96,71 +118,78 @@ async def notify_user(
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Zakaz xabari matni (admin/courier ko'rishi uchun)
+# ORDER MESSAGE (Admin/Courier uchun format)
 # ═══════════════════════════════════════════════════════════════
 
-def build_order_message(order: dict) -> str:
-    """Zakaz xabarini xavfsiz (KeyError'siz) yasaydi."""
-    items = order.get("items") or []
-    lines_list = []
+def build_order_message(order: dict, title: str = "Yangi zakaz") -> str:
+    order_id = order.get("id", "—")
+    address  = order.get("address", "—")
+    items    = order.get("items") or []
+    total    = int(order.get("total", 0) or 0)
+
+    lines = []
     for i in items:
-        name = i.get("fullName") or i.get("name") or "—"
-        qty = int(i.get("quantity", 0) or 0)
+        name  = i.get("fullName") or i.get("name") or "—"
+        qty   = int(i.get("quantity", 0) or 0)
         price = int(i.get("price", 0) or 0)
-        lines_list.append(f"  • {name} x {qty} — {price * qty:,} UZS")
-    lines = "\n".join(lines_list) if lines_list else "  • —"
+        lines.append(f"  • {name} x {qty} — {price * qty:,} UZS")
+    items_text = "\n".join(lines) if lines else "  • —"
 
-    status = order.get("status", "pending")
-    emoji, label = STATUS.get(status, ("🕐", status))
+    payment_key = (order.get("payment") or "naqt").strip().lower()
+    payment = PAYMENT_MAP.get(payment_key, "💵 Naqt")
 
-    payment_map = {"naqt": "💵 Naqt", "card": "💳 Karta"}
-    payment = payment_map.get(order.get("payment", "naqt"), "💵 Naqt")
-
-    extra_phone = order.get("extra_phone")
-    comment = order.get("comment")
     customer = order.get("customer_name", "") or ""
-    phone = order.get("phone", "") or ""
-    coins_used = int(order.get("coins_used", 0) or 0)
+    phone    = order.get("phone", "—") or "—"
+    extra_phone = order.get("extra_phone") or ""
+    comment     = order.get("comment") or ""
 
     created = order.get("created_at") or ""
     created_view = created[:16].replace("T", " ") if created else "—"
 
-    extra_lines = ""
-    if customer or phone:
-        extra_lines += f"👤 <b>Mijoz:</b> {customer} {phone}\n"
-    if extra_phone:
-        extra_lines += f"📞 <b>Qo'shimcha tel:</b> {extra_phone}\n"
-    if comment:
-        extra_lines += f"💬 <b>Izoh:</b> {comment}\n"
-    if coins_used:
-        extra_lines += (
-            f"🪙 <b>Coin ishlatildi:</b> {coins_used} "
-            f"({coins_used * 1000:,} UZS chegirma)\n"
-        )
+    status = order.get("status", "pending")
+    emoji, label = STATUS.get(status, ("🕐", status))
 
-    total = int(order.get("total", 0) or 0)
-    address = order.get("address", "—")
-    order_id = order.get("id", "—")
-
-    return (
-        f"🛒 <b>Zakaz #{order_id}</b>\n"
-        f"───────────────\n"
+    text = (
+        f"🛒 <b>{title} #{order_id}</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
         f"📍 <b>Manzil:</b> {address}\n\n"
-        f"🍽 <b>Tarkib:</b>\n{lines}\n\n"
-        f"💳 <b>Jami:</b> {total:,} UZS\n"
-        f"💰 <b>To'lov:</b> {payment}\n"
-        f"{extra_lines}"
+        f"🍽 <b>Tarkib:</b>\n{items_text}\n\n"
+        f"💰 <b><u>{total:,} UZS</u></b>\n"
+        f"💳 <b>To'lov:</b> {payment}\n"
+        f"👤 <b>Mijoz:</b> {customer}\n"
+        f"📞 <b>Telefon:</b> {phone}\n"
+    )
+
+    if extra_phone:
+        text += f"📱 <b>Qo'sh. tel:</b> {extra_phone}\n"
+    if comment:
+        text += f"💬 <b>Izoh:</b> {comment}\n"
+
+    text += (
         f"⏰ <b>Vaqt:</b> {created_view}\n\n"
         f"{emoji} <b>Status:</b> {label}"
     )
+    return text
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Inline tugmalar (admin zakaz boshqaruvi)
+# KEYBOARDS (Admin/Courier)
 # ═══════════════════════════════════════════════════════════════
 
-def build_admin_keyboard(order_id: str, status: str) -> Optional[InlineKeyboardMarkup]:
-    rows = []
+def admin_keyboard(order: dict) -> InlineKeyboardMarkup:
+    order_id = order.get("id", "")
+    status   = order.get("status", "pending")
+
+    address = order.get("address", "")
+    phone   = order.get("phone", "")
+
+    rows = [
+        [
+            InlineKeyboardButton("📞 Call", url=_tel_url(phone)),
+            InlineKeyboardButton("📍 Maps", url=_maps_url(address)),
+        ]
+    ]
+
     if status == "pending":
         rows.append([
             InlineKeyboardButton("✅ Tasdiqlash",   callback_data=f"status:{order_id}:confirmed"),
@@ -173,27 +202,43 @@ def build_admin_keyboard(order_id: str, status: str) -> Optional[InlineKeyboardM
         ])
     elif status == "cooking":
         rows.append([
-            InlineKeyboardButton("📦 Ovqat tayyor (kuryerga)", callback_data=f"status:{order_id}:ready"),
+            InlineKeyboardButton("📦 Ovqat tayyor", callback_data=f"status:{order_id}:ready"),
         ])
-    # ready/delivering/done/cancelled — admin tugma yo'q
-    return InlineKeyboardMarkup(rows) if rows else None
+    # ready/delivering/done/cancelled — admin tugma kerak emas
+
+    return InlineKeyboardMarkup(rows)
 
 
-def build_courier_keyboard(order_id: str, status: str) -> Optional[InlineKeyboardMarkup]:
-    # courier faqat ready/delivering da tugma ko'radi
+def courier_keyboard(order: dict) -> InlineKeyboardMarkup:
+    order_id = order.get("id", "")
+    status   = order.get("status", "ready")
+
+    address = order.get("address", "")
+    phone   = order.get("phone", "")
+
+    rows = [
+        [
+            InlineKeyboardButton("📞 Call", url=_tel_url(phone)),
+            InlineKeyboardButton("📍 Maps", url=_maps_url(address)),
+        ]
+    ]
+
     if status == "ready":
-        return InlineKeyboardMarkup([[
-            InlineKeyboardButton("🚗 Yetkazilmoqda", callback_data=f"courier:{order_id}:delivering")
-        ]])
-    if status == "delivering":
-        return InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Yetkazildi", callback_data=f"courier:{order_id}:done")
-        ]])
-    return None
+        rows.append([InlineKeyboardButton("🚗 Yetkazilmoqda", callback_data=f"courier:{order_id}:delivering")])
+    elif status == "delivering":
+        rows.append([InlineKeyboardButton("✅ Yetkazildi", callback_data=f"courier:{order_id}:done")])
+
+    return InlineKeyboardMarkup(rows)
+
+
+def review_keyboard(order_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("⭐ Izoh qoldirish", callback_data=f"review:{order_id}")
+    ]])
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Global app instance (main.py dan chaqirish uchun)
+# GLOBAL APP INSTANCE (main.py dan chaqirish uchun)
 # ═══════════════════════════════════════════════════════════════
 
 _app_instance: Optional[Application] = None
@@ -204,11 +249,10 @@ def _get_app() -> Optional[Application]:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Adminga bildirishnomalar (main.py / webhook dan chaqiriladi)
+# NOTIFY (main.py dan chaqiriladi)
 # ═══════════════════════════════════════════════════════════════
 
 async def notify_new_order(order: dict):
-    """Yangi zakaz kelganda adminga xabar yuboradi + msg_id saqlaydi."""
     app = _get_app()
     if not app:
         return
@@ -221,11 +265,10 @@ async def notify_new_order(order: dict):
     try:
         msg = await app.bot.send_message(
             chat_id=int(admin_id),
-            text=build_order_message(order),
+            text=build_order_message(order, title="Yangi zakaz"),
             parse_mode="HTML",
-            reply_markup=build_admin_keyboard(order.get("id", ""), order.get("status", "pending")),
+            reply_markup=admin_keyboard(order),
         )
-        # admin message id orderga bog'lab saqlash (ixtiyoriy)
         try:
             db.update_tg_msg_id(order["id"], msg.message_id)
         except Exception:
@@ -235,7 +278,6 @@ async def notify_new_order(order: dict):
 
 
 async def notify_cancelled(order: dict):
-    """Zakaz user tomonidan bekor bo'lganda adminga xabar."""
     app = _get_app()
     if not app:
         return
@@ -258,12 +300,7 @@ async def notify_cancelled(order: dict):
         print(f"notify_cancelled xato: {e}")
 
 
-# ═══════════════════════════════════════════════════════════════
-#  OTP yuborish (main.py → /api/otp/send endpoint dan chaqiriladi)
-# ═══════════════════════════════════════════════════════════════
-
 async def send_otp(chat_id: int, code: str):
-    """Foydalanuvchiga OTP kodini Telegram orqali yuboradi."""
     app = _get_app()
     if not app:
         raise RuntimeError("Bot instance mavjud emas — create_app() chaqirilmagan")
@@ -281,34 +318,29 @@ async def send_otp(chat_id: int, code: str):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  /start komandasi
+# /start
 # ═══════════════════════════════════════════════════════════════
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # Admin
-    if _is_admin_chat(chat_id):
-        admin_kb = ReplyKeyboardMarkup([["📊 Statistika"]], resize_keyboard=True)
+    if _is_admin(chat_id):
+        kb = ReplyKeyboardMarkup([["📊 Statistika"]], resize_keyboard=True)
         await update.message.reply_text(
-            f"👋 <b>KFC Admin Bot</b>\n\n"
-            f"Chat ID: <code>{chat_id}</code>\n\n"
-            f"Quyidagi tugmalardan foydalaning:",
+            f"👋 <b>KFC Admin Bot</b>\n\nChat ID: <code>{chat_id}</code>",
             parse_mode="HTML",
-            reply_markup=admin_kb,
+            reply_markup=kb,
         )
         return
 
-    # Courier
-    if _is_courier_chat(chat_id):
+    if _is_courier(chat_id):
         await update.message.reply_text(
-            "🚗 <b>Kuryer panel</b>\n\n"
-            "Sizga buyurtma tayyor bo'lganda bu yerga yuboriladi.",
+            "🚗 <b>Kuryer panel</b>\n\nTayyor zakazlar shu yerga keladi.",
             parse_mode="HTML",
         )
         return
 
-    # Oddiy user
+    # User: ro'yxatdan o'tganmi?
     existing = db.get_telegram_user_by_chat_id(str(chat_id))
     if existing:
         website = os.getenv("WEBSITE_URL", "https://kfs-menu.vercel.app/")
@@ -339,14 +371,13 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Kontakt qabul qilish
+# Contact handler
 # ═══════════════════════════════════════════════════════════════
 
 async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     contact = update.message.contact
     chat_id = update.effective_chat.id
 
-    # boshqa odamning kontakti bo'lsa
     if contact.user_id and contact.user_id != update.effective_user.id:
         await update.message.reply_text(
             "❌ Iltimos, faqat <b>o'z raqamingizni</b> yuboring.",
@@ -354,7 +385,6 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # normalize: +998XXXXXXXXX
     phone = (contact.phone_number or "").replace("+", "").replace(" ", "")
     if not phone.startswith("998"):
         phone = "998" + phone[-9:]
@@ -362,14 +392,12 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     website = os.getenv("WEBSITE_URL", "https://kfs-menu.vercel.app/")
 
-    # reply keyboard remove
     rm = await update.message.reply_text("⏳", reply_markup=ReplyKeyboardRemove())
     try:
         await rm.delete()
     except Exception:
         pass
 
-    # already registered by chat_id
     existing = db.get_telegram_user_by_chat_id(str(chat_id))
     if existing:
         first = (existing.get("full_name") or contact.first_name or "do'st").split()[0]
@@ -388,10 +416,7 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db.save_telegram_user(phone=phone, chat_id=str(chat_id), full_name=full_name)
 
     await update.message.reply_text(
-        f"🇺🇿 <b>Assalomu alaykum, {contact.first_name}!</b> 👋\n"
-        f"Buyurtma berish uchun tugmani bosing ⬇️\n\n"
-        f"🇷🇺 <b>Здравствуйте!</b> 👋\n"
-        f"Нажмите кнопку ниже для заказа ⬇️",
+        "✅ <b>Raqam saqlandi!</b>\n\nBuyurtma berish uchun tugmani bosing ⬇️",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("🍗 Ochish / Открыть", url=website)
@@ -400,16 +425,14 @@ async def handle_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Admin status callback (status:order_id:new_status)
+# Admin callback: status:order_id:new_status
 # ═══════════════════════════════════════════════════════════════
 
 async def handle_admin_status_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data or ""
 
-    # auth
-    chat_id = update.effective_chat.id
-    if not _is_admin_chat(chat_id):
+    if not _is_admin(update.effective_chat.id):
         await query.answer("❌ Ruxsat yo'q", show_alert=True)
         return
 
@@ -423,9 +446,9 @@ async def handle_admin_status_callback(update: Update, ctx: ContextTypes.DEFAULT
         await query.answer("❌ Zakaz topilmadi", show_alert=True)
         return
 
-    old = order.get("status", "pending")
-    if not _can_move(old, new_status):
-        await query.answer("⚠️ Status noto'g'ri ketma-ketlikda", show_alert=True)
+    old_status = order.get("status", "pending")
+    if not _can_move(old_status, new_status):
+        await query.answer("⚠️ Status ketma-ketligi xato", show_alert=True)
         return
 
     updated = db.update_status(order_id, new_status)
@@ -436,83 +459,61 @@ async def handle_admin_status_callback(update: Update, ctx: ContextTypes.DEFAULT
     # admin message update
     try:
         await query.edit_message_text(
-            text=build_order_message(updated),
+            text=build_order_message(updated, title="Yangi zakaz"),
             parse_mode="HTML",
-            reply_markup=build_admin_keyboard(order_id, new_status),
+            reply_markup=admin_keyboard(updated),
         )
     except Exception as e:
-        print(f"Admin xabar update xato: {e}")
+        print(f"Admin message update xato: {e}")
 
     emoji, label = STATUS.get(new_status, ("✅", new_status))
     await query.answer(f"{emoji} {label}")
 
-    # side-effects
-    order_short = order_id
+    phone = updated.get("phone")
 
-    # confirmed -> userga xabar
-    if new_status == "confirmed":
-        phone = updated.get("phone")
-        total = int(updated.get("total", 0) or 0)
-        if phone:
-            await notify_user(
-                ctx, phone,
-                f"✅ <b>Buyurtmangiz tasdiqlandi!</b>\n\n"
-                f"📦 Buyurtma: <b>#{order_short}</b>\n"
-                f"💰 Summa: <b>{total:,} UZS</b>\n\n"
-                f"🍗 Tayyorlanmoqda, tez orada yetkazamiz!"
-            )
+    # ✅ User notify (confirmed / ready)
+    if new_status == "confirmed" and phone:
+        await notify_user(
+            ctx, phone,
+            f"✅ <b>Buyurtmangiz tasdiqlandi!</b>\n\n"
+            f"📦 Buyurtma: <b>#{order_id}</b>\n"
+            f"💰 Summa: <b>{int(updated.get('total',0) or 0):,} UZS</b>\n\n"
+            f"🍗 Tayyorlanmoqda, tez orada yetkazamiz!"
+        )
 
-    # ready -> courierga yuborish (agar courier bor bo'lsa)
     if new_status == "ready":
+        # courierga yuborish
         courier_id = os.getenv("COURIER_CHAT_ID", "")
         if courier_id:
-            items = updated.get("items") or []
-            items_text = "\n".join(
-                f"  • {(i.get('fullName') or i.get('name') or '—')} x{int(i.get('quantity',0) or 0)}"
-                for i in items
-            ) or "  • —"
-
-            courier_msg = (
-                f"📦 <b>Yangi yetkazish #{order_short}</b>\n"
-                f"━━━━━━━━━━━━━━━\n"
-                f"📍 <b>Manzil:</b> {updated.get('address','—')}\n\n"
-                f"🍽 <b>Tarkib:</b>\n{items_text}\n\n"
-                f"💳 <b>Jami:</b> {int(updated.get('total',0) or 0):,} UZS\n"
-                f"👤 <b>Mijoz:</b> {updated.get('customer_name','')}\n"
-                f"📞 <b>Tel:</b> {updated.get('phone','—')}"
-            )
             try:
                 await ctx.bot.send_message(
                     chat_id=int(courier_id),
-                    text=courier_msg,
+                    text=build_order_message({**updated, "status": "ready"}, title="Yetkazish"),
                     parse_mode="HTML",
-                    reply_markup=build_courier_keyboard(order_id, "ready"),
+                    reply_markup=courier_keyboard({**updated, "status": "ready"}),
                 )
             except Exception as e:
-                print(f"Kuryerga xabar yuborishda xato: {e}")
+                print(f"Courierga yuborishda xato: {e}")
 
-        # userga "tayyor, kuryer kutyapti" xabar (xohlasangiz)
-        phone = updated.get("phone")
+        # userga ham notify
         if phone:
             await notify_user(
                 ctx, phone,
                 f"📦 <b>Buyurtmangiz tayyor!</b>\n\n"
-                f"📦 Zakaz #{order_short}\n"
+                f"📦 Zakaz: <b>#{order_id}</b>\n"
                 f"🚗 Kuryer tez orada yo'lga chiqadi."
             )
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Kuryer callback (courier:order_id:action)
+# Courier callback: courier:order_id:action
 # ═══════════════════════════════════════════════════════════════
 
 async def courier_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data or ""
 
-    # auth
-    chat_id = update.effective_chat.id
-    if not _is_courier_chat(chat_id):
+    if not _is_courier(update.effective_chat.id):
         await query.answer("❌ Ruxsat yo'q", show_alert=True)
         return
 
@@ -527,52 +528,49 @@ async def courier_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Zakaz topilmadi", show_alert=True)
         return
 
-    admin_id = os.getenv("ADMIN_CHAT_ID", "")
-    admin_chat = int(admin_id) if str(admin_id).isdigit() else 0
-    order_short = order_id
+    old_status = order.get("status", "pending")
 
     # delivering
     if action == "delivering":
-        old = order.get("status", "pending")
-        if not _can_move(old, "delivering"):
+        if not _can_move(old_status, "delivering"):
             await query.answer("⚠️ Status ketma-ketligi xato", show_alert=True)
             return
 
-        db.update_status(order_id, "delivering")
+        updated = db.update_status(order_id, "delivering") or order
 
-        # courier message markup update
+        # courier markup update
         try:
             await query.edit_message_reply_markup(
-                reply_markup=build_courier_keyboard(order_id, "delivering")
+                reply_markup=courier_keyboard({**updated, "status": "delivering"})
             )
         except Exception:
             pass
 
-        # admin notification
-        if admin_chat:
-            try:
-                await ctx.bot.send_message(
-                    chat_id=admin_chat,
-                    text=f"🚗 <b>Kuryer yo'lda!</b>\n📦 Zakaz #{order_short}",
-                    parse_mode="HTML",
-                )
-            except Exception as e:
-                print(f"Adminga delivering xabari xato: {e}")
-
-        # user notification
-        phone = order.get("phone")
+        # ✅ User notify delivering
+        phone = updated.get("phone")
         if phone:
             await notify_user(
                 ctx, phone,
                 f"🚗 <b>Kuryer yo'lda!</b>\n\n"
-                f"📦 Zakaz #{order_short} sizga yetib kelmoqda.\n"
+                f"📦 Zakaz: <b>#{order_id}</b>\n"
                 f"Iltimos, tayyor bo'ling! 🍗"
             )
 
+        # admin signal (ixtiyoriy)
+        admin_id = os.getenv("ADMIN_CHAT_ID", "")
+        if admin_id:
+            try:
+                await ctx.bot.send_message(
+                    chat_id=int(admin_id),
+                    text=f"🚗 <b>Kuryer yo'lda!</b>\n📦 Zakaz #{order_id}",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
     # done
     elif action == "done":
-        old = order.get("status", "pending")
-        if not _can_move(old, "done"):
+        if not _can_move(old_status, "done"):
             await query.answer("⚠️ Status ketma-ketligi xato", show_alert=True)
             return
 
@@ -581,56 +579,54 @@ async def courier_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # courier confirmation
         try:
             await query.edit_message_text(
-                text=f"✅ <b>Zakaz #{order_short} yetkazildi!</b>\n\nRahmat! 🎉",
+                text=f"✅ <b>Zakaz #{order_id} yetkazildi!</b>\n\nRahmat! 🎉",
                 parse_mode="HTML",
-                reply_markup=None,
             )
         except Exception:
             pass
 
-        # admin notification
-        if admin_chat:
+        # admin signal (ixtiyoriy)
+        admin_id = os.getenv("ADMIN_CHAT_ID", "")
+        if admin_id:
             try:
                 await ctx.bot.send_message(
-                    chat_id=admin_chat,
-                    text=f"✅ <b>Zakaz #{order_short} yetkazildi!</b>\nKuryer yetkazib berdi.",
+                    chat_id=int(admin_id),
+                    text=f"✅ <b>Zakaz #{order_id} yetkazildi!</b>",
                     parse_mode="HTML",
                 )
-            except Exception as e:
-                print(f"Adminga done xabari xato: {e}")
+            except Exception:
+                pass
 
-        # user coin + review
+        # ✅ COIN + REVIEW + user notify done
         phone = updated.get("phone")
         if phone:
             total = int(updated.get("total", 0) or 0)
             coins_used = int(updated.get("coins_used", 0) or 0)
+
+            # coins ishlatilgan bo'lsa, cashback hisobida "asl total"ni tiklaymiz
             actual_total = total + (coins_used * 1000)
+
             earned = max(1, round(actual_total * 0.05 / 1000))
 
-            # ✅ db.add_coins idempotent bo'lsa, order_id bo'yicha 1 marta qo'shadi
             new_balance = 0
             try:
                 new_balance = db.add_coins(phone=phone, amount=earned, order_id=order_id)
             except Exception as e:
-                print(f"add_coins xato: {e}")
-
-            review_kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("⭐ Izoh qoldirish", callback_data=f"review:{order_id}")
-            ]])
+                print(f"db.add_coins xato: {e}")
 
             await notify_user(
                 ctx, phone,
-                f"🎉 <b>Buyurtmangiz muvaffaqiyatli yetkazildi!</b>\n\n"
+                f"🎉 <b>Buyurtmangiz yetkazildi!</b>\n\n"
                 f"🪙 Sizga <b>+{earned} coin</b> qo'shildi\n"
                 f"💰 Bu <b>{earned * 1000:,} UZS</b> chegirmaga teng\n"
                 f"📊 Joriy balans: <b>{new_balance} coin</b>\n\n"
                 f"Keyingi zakazda ishlatishingiz mumkin! 🛍",
-                reply_markup=review_kb,
+                reply_markup=review_keyboard(order_id),
             )
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Review callback (review:order_id)
+# Review callbacks
 # ═══════════════════════════════════════════════════════════════
 
 async def review_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -659,13 +655,11 @@ async def handle_review_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     review_text = (update.message.text or "").strip()
     user = update.effective_user
 
-    admin_id = os.getenv("ADMIN_CHAT_ID", "0")
-    admin_chat = int(admin_id) if str(admin_id).isdigit() else 0
-
-    if admin_chat and review_text:
+    admin_id = os.getenv("ADMIN_CHAT_ID", "")
+    if admin_id and review_text:
         try:
             await ctx.bot.send_message(
-                chat_id=admin_chat,
+                chat_id=int(admin_id),
                 text=(
                     f"💬 <b>Yangi izoh!</b>\n\n"
                     f"📦 Buyurtma: #{order_id}\n"
@@ -674,22 +668,21 @@ async def handle_review_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 ),
                 parse_mode="HTML",
             )
-        except Exception as e:
-            print(f"Adminga review xabari xato: {e}")
+        except Exception:
+            pass
 
     await update.message.reply_text(
-        "🙏 Izohingiz uchun rahmat!\n"
-        "Siz uchun yanada yaxshilanishga harakat qilamiz. 🍗",
+        "🙏 Izohingiz uchun rahmat! 🍗",
         parse_mode="HTML",
     )
 
 
 # ═══════════════════════════════════════════════════════════════
-#  /orders komandasi (admin)
+# Admin commands / stats button
 # ═══════════════════════════════════════════════════════════════
 
 async def cmd_orders(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin_chat(update.effective_chat.id):
+    if not _is_admin(update.effective_chat.id):
         return
 
     orders = db.get_all(limit=10)
@@ -699,7 +692,8 @@ async def cmd_orders(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     lines = []
     for o in orders:
-        emoji, label = STATUS.get(o.get("status", "pending"), ("🕐", "pending"))
+        st = o.get("status", "pending")
+        emoji, label = STATUS.get(st, ("🕐", st))
         lines.append(f"{emoji} #{o.get('id','—')} — {int(o.get('total',0) or 0):,} UZS — {label}")
 
     await update.message.reply_text(
@@ -708,12 +702,8 @@ async def cmd_orders(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ═══════════════════════════════════════════════════════════════
-#  /stats komandasi (admin) — bugungi
-# ═══════════════════════════════════════════════════════════════
-
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin_chat(update.effective_chat.id):
+    if not _is_admin(update.effective_chat.id):
         return
     s = db.stats_today()
     await update.message.reply_text(
@@ -727,16 +717,11 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ═══════════════════════════════════════════════════════════════
-#  📊 Statistika tugmasi — faqat admin, oylik
-# ═══════════════════════════════════════════════════════════════
-
 async def handle_statistics_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin_chat(update.effective_chat.id):
+    if not _is_admin(update.effective_chat.id):
         return
 
     s = db.stats_monthly()
-
     lines = [
         f"📊 <b>Oylik statistika — {s.get('month_label','')}</b>\n",
         f"📦 Jami zakazlar : <b>{s.get('total',0)}</b>",
@@ -760,8 +745,6 @@ async def handle_statistics_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
 
     text = "\n".join(lines)
-
-    # Telegram 4096 limit
     if len(text) <= 4096:
         await update.message.reply_text(text, parse_mode="HTML")
         return
@@ -778,7 +761,7 @@ async def handle_statistics_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  App yaratish
+# App yaratish
 # ═══════════════════════════════════════════════════════════════
 
 def create_app() -> Application:
@@ -786,7 +769,7 @@ def create_app() -> Application:
 
     token = os.getenv("BOT_TOKEN", "")
     if not token:
-        print("⚠️ BOT_TOKEN o'rnatilmagan!")
+        print("⚠️ BOT_TOKEN environment variable o'rnatilmagan!")
 
     app = Application.builder().token(token).build()
 
@@ -801,10 +784,10 @@ def create_app() -> Application:
     # admin reply button
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^📊 Statistika$"), handle_statistics_btn))
 
-    # review text (oddiy textlar ichidan)
+    # review text
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_review_text))
 
-    # callback handlers (pattern bilan)
+    # callbacks
     app.add_handler(CallbackQueryHandler(review_callback, pattern=r"^review:"))
     app.add_handler(CallbackQueryHandler(courier_callback, pattern=r"^courier:"))
     app.add_handler(CallbackQueryHandler(handle_admin_status_callback, pattern=r"^status:"))
