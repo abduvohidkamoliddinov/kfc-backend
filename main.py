@@ -10,8 +10,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, field_validator
 
@@ -22,7 +23,7 @@ from database import (
     get_coins,
     spend_coins,
 )
-from bot import create_app, notify_new_order, notify_cancelled, send_otp
+import menu_store as menu
 
 # ───────────────────────────────────────────────────────────────
 # Telegram bot lifecycle (FastAPI lifespan)
