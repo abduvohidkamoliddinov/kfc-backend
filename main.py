@@ -460,8 +460,6 @@ def get_user_coins(phone: str):
     balance = get_coins(p)
     return {"phone": p, "balance": balance, "sum_value": balance * 1000}
 
-from menu_store import load_data, save_data
-
 @app.get("/api/menu")
 def get_menu():
     return load_data()
@@ -502,6 +500,34 @@ def get_menu():
 def update_menu(payload: dict):
     save_menu(payload)
     return {"ok": True}
+
+# ===== MENU STORAGE =====
+import json, os
+
+MENU_FILE = "menu_data.json"
+
+def load_data():
+    if not os.path.exists(MENU_FILE):
+        return {"categories": [], "items": []}
+    with open(MENU_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_data(data):
+    with open(MENU_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+@app.get("/api/menu")
+def get_menu():
+    return load_data()
+
+
+@app.post("/api/menu")
+def set_menu(payload: dict):
+    save_data(payload)
+    return {"ok": True}
+
+
 # ───────────────────────────────────────────────────────────────
 # Run local
 # ───────────────────────────────────────────────────────────────
