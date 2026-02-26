@@ -2526,8 +2526,17 @@
             '🌯': `<img src="${IMG_TWISTER}" alt="twister">`,
             '🍗': `<img src="${IMG_BUCKET}" alt="bucket">`,
         };
-        function pImg(emoji) { return IMG[emoji] || emoji; }
+function pImg(v) {
+  if (!v) return "";
 
+  // agar URL bo‘lsa (admin upload qilgan rasm)
+  if (typeof v === "string" && (v.startsWith("/uploads/") || v.startsWith("http"))) {
+    return `<img src="${v}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:16px">`;
+  }
+
+  // emoji bo‘lsa eski usul
+  return IMG[v] || v;
+}
  let products = [];
 
   async function loadProductsFromAPI() {
