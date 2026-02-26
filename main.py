@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI):
     token = os.getenv("BOT_TOKEN", "")
     if token:
         _bot_app = None
+    if _bot_app is not None:
         await _bot_app.initialize()
         await _bot_app.start()
 
@@ -62,7 +63,8 @@ async def lifespan(app: FastAPI):
             _bot_polling_task.cancel()
 
         await _bot_app.stop()
-        await _bot_app.shutdown()
+if _bot_app is not None:
+    await _bot_app.shutdown()
 
 
 app = FastAPI(title="KFC Backend", lifespan=lifespan)
