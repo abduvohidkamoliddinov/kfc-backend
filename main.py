@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
 
     token = os.getenv("BOT_TOKEN", "")
     if token:
-        _bot_app = create_app()
+        _bot_app = None
         await _bot_app.initialize()
         await _bot_app.start()
 
