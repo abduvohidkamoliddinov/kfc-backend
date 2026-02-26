@@ -462,7 +462,21 @@ def get_user_coins(phone: str):
     balance = get_coins(p)
     return {"phone": p, "balance": balance, "sum_value": balance * 1000}
 
+from menu_store import load_data, save_data
 
+@app.get("/api/menu")
+def get_menu():
+    return load_data()
+
+@app.post("/api/menu")
+def save_menu_endpoint(payload: dict):
+    data = load_data()
+    if "categories" in payload:
+        data["categories"] = payload["categories"]
+    if "items" in payload:
+        data["items"] = payload["items"]
+    save_data(data)
+    return {"ok": True, "data": data}
 # ───────────────────────────────────────────────────────────────
 # Run local
 # ───────────────────────────────────────────────────────────────
