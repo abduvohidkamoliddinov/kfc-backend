@@ -64,8 +64,21 @@ async def lifespan(app: FastAPI):
 
         await _bot_app.stop()
 if _bot_app is not None:
-    await _bot_app.shutdown()
+from contextlib import asynccontextmanager
 
+_bot_app = None
+
+@asynccontextmanager
+async def lifespan(app):
+    # startup
+    if _bot_app is not None:
+        await _bot_app.initialize()
+
+    yield
+
+    # shutdown
+    if _bot_app is not None:
+        await _bot_app.shutdown()
 
 app = FastAPI(title="KFC Backend", lifespan=lifespan)
 
