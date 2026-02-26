@@ -2528,16 +2528,30 @@
         };
         function pImg(emoji) { return IMG[emoji] || emoji; }
 
-        const products = [
-            { id: 1, name: 'БИГ САНДЕРС Б...', fullName: 'БИГ САНДЕРС БАСКЕТ', price: 40000, image: '🍔', category: 'burgers', description: 'Хрустящий бургер с сочной курицей' },
-            { id: 2, name: 'БИГ САНДЕРС Б...', fullName: 'БИГ САНДЕРС БАСКЕТ', price: 36000, image: '🍔', category: 'burgers', description: 'Классический бургер' },
-            { id: 3, name: 'САНДЕРС БУРГЕР', price: 30000, image: '🍔', category: 'burgers', description: 'Сандерс с соусом' },
-            { id: 4, name: 'ШЕФ ТАУЭР ОРИ...', fullName: 'ШЕФ ТАУЭР ОРИГИНАЛ', price: 27000, image: '🍔', category: 'burgers', description: 'Двойной чизбургер' },
-            { id: 5, name: 'БОКСМАСТЕР О...', fullName: 'БОКСМАСТЕР ОРИГИНАЛ', price: 32000, image: '🌯', category: 'twisters', description: 'Твистер с курицей' },
-            { id: 6, name: 'ТВИСТЕР КЕБАБ ...', fullName: 'ТВИСТЕР КЕБАБ ОСТРЫЙ', price: 28000, image: '🌯', category: 'twisters', description: 'Острый твистер' },
-            { id: 7, name: 'ТВИСТЕР ОРИГ...', fullName: 'ТВИСТЕР ОРИГИНАЛ', price: 26000, image: '🌯', category: 'twisters', description: 'Классический твистер' },
-        ];
+ let products = [];
 
+  async function loadProductsFromAPI() {
+    const res = await fetch("/api/menu");
+    if (!res.ok) throw new Error("Menu API ishlamadi: " + res.status);
+    const data = await res.json();
+
+    products = (data.items || []).map(it => ({
+      id: it.id,
+      name: it.name_ru || it.name_uz,
+      fullName: it.name_ru || it.name_uz,
+      price: it.price,
+      image: it.image_url ? it.image_url : "🍔", // rasm bo‘lsa URL, bo‘lmasa emoji
+      category: it.category_slug,
+      description: it.desc_ru || it.desc_uz || ""
+    }));
+
+    // Agar renderProducts() bo‘lsa, qayta chizsin
+    if (typeof renderProducts === "function") renderProducts();
+  }
+
+  window.addEventListener("load", () => {
+    loadProductsFromAPI().catch(err => console.error("loadProductsFromAPI error:", err));
+  });
         let cart = [];
         let currentProduct = null;
 
