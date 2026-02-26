@@ -10,9 +10,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, field_validator
 
@@ -23,6 +22,8 @@ from database import (
     get_coins,
     spend_coins,
 )
+from bot import create_app, notify_new_order, notify_cancelled, send_otp
+
 # ───────────────────────────────────────────────────────────────
 # Telegram bot lifecycle (FastAPI lifespan)
 # ───────────────────────────────────────────────────────────────
@@ -37,8 +38,7 @@ async def lifespan(app: FastAPI):
 
     token = os.getenv("BOT_TOKEN", "")
     if token:
-        _bot_app = None
-    if _bot_app is not None:
+        _bot_app = create_app()
         await _bot_app.initialize()
         await _bot_app.start()
 
@@ -63,22 +63,8 @@ async def lifespan(app: FastAPI):
             _bot_polling_task.cancel()
 
         await _bot_app.stop()
-if _bot_app is not None:
-from contextlib import asynccontextmanager
-
-_bot_app = None
-
-@asynccontextmanager
-async def lifespan(app):
-    # startup
-    if _bot_app is not None:
-        await _bot_app.initialize()
-
-    yield
-
-    # shutdown
-    if _bot_app is not None:
         await _bot_app.shutdown()
+
 
 app = FastAPI(title="KFC Backend", lifespan=lifespan)
 
@@ -474,73 +460,6 @@ def get_user_coins(phone: str):
         raise HTTPException(400, "phone required")
     balance = get_coins(p)
     return {"phone": p, "balance": balance, "sum_value": balance * 1000}
-
-@app.get("/api/menu")
-def get_menu():
-    return load_data()
-
-@app.post("/api/menu")
-def save_menu_endpoint(payload: dict):
-    data = load_data()
-    if "categories" in payload:
-        data["categories"] = payload["categories"]
-    if "items" in payload:
-        data["items"] = payload["items"]
-    save_data(data)
-    return {"ok": True, "data": data}
-
-# ===== MENU SIMPLE STORAGE =====
-import json
-import os
-
-MENU_FILE = "menu_data.json"
-
-def load_menu():
-    if not os.path.exists(MENU_FILE):
-        return {"categories": [], "items": []}
-    with open(MENU_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_menu(data):
-    with open(MENU_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-@app.get("/api/menu")
-def get_menu():
-    return load_menu()
-
-
-@app.post("/api/menu")
-def update_menu(payload: dict):
-    save_menu(payload)
-    return {"ok": True}
-
-# ===== MENU STORAGE =====
-import json, os
-
-MENU_FILE = "menu_data.json"
-
-def load_data():
-    if not os.path.exists(MENU_FILE):
-        return {"categories": [], "items": []}
-    with open(MENU_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_data(data):
-    with open(MENU_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-@app.get("/api/menu")
-def get_menu():
-    return load_data()
-
-
-@app.post("/api/menu")
-def set_menu(payload: dict):
-    save_data(payload)
-    return {"ok": True}
 
 
 # ───────────────────────────────────────────────────────────────
