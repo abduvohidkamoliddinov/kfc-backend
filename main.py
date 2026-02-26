@@ -23,8 +23,6 @@ from database import (
     get_coins,
     spend_coins,
 )
-import menu_store as menu
-
 # ───────────────────────────────────────────────────────────────
 # Telegram bot lifecycle (FastAPI lifespan)
 # ───────────────────────────────────────────────────────────────
@@ -477,6 +475,33 @@ def save_menu_endpoint(payload: dict):
         data["items"] = payload["items"]
     save_data(data)
     return {"ok": True, "data": data}
+
+# ===== MENU SIMPLE STORAGE =====
+import json
+import os
+
+MENU_FILE = "menu_data.json"
+
+def load_menu():
+    if not os.path.exists(MENU_FILE):
+        return {"categories": [], "items": []}
+    with open(MENU_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_menu(data):
+    with open(MENU_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+@app.get("/api/menu")
+def get_menu():
+    return load_menu()
+
+
+@app.post("/api/menu")
+def update_menu(payload: dict):
+    save_menu(payload)
+    return {"ok": True}
 # ───────────────────────────────────────────────────────────────
 # Run local
 # ───────────────────────────────────────────────────────────────
